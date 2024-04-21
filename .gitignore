@@ -1,0 +1,8 @@
+debugvisualizer/
+__pycache__
+
+*.dbf
+*.shp
+*.fix
+*.prj
+*.shx
