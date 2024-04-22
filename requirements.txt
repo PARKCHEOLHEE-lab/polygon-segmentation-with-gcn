@@ -13,3 +13,5 @@ vscodedebugvisualizer==0.1.0
 mapbox-earcut==1.0.1
 pre-commit==3.7.0
 geopandas==0.14.3
+zipfile36==0.1.3
+

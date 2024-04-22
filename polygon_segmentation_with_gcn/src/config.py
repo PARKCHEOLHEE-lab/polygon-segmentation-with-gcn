@@ -12,6 +12,9 @@ class DataConfiguration:
 
     SHP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/shp"))
     SAVE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/processed"))
+    
+    LANDS_ZIP_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands_zip"))
+    LANDS_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands"))
 
     APT_STRING = "아파트"
     APT_LAND_AREA_THRESHOLD = 1000
