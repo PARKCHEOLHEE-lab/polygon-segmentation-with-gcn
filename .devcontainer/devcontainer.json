@@ -33,6 +33,6 @@
         "--gpus",
         "all"
     ],
-    "postCreateCommand": "./post-create-command.sh",
+    "postCreateCommand": "sh /usr/local/bin/post-create-command.sh",
     "remoteUser": "root"
 }
