@@ -46,31 +46,7 @@ class LandUsage:
         공업용
     """
 
-    USAGE_ROAD_1 = "도로등"
-    USAGE_ROAD_2 = "도로"
-    USAGE_WILDWOOD = "자연림"
-    USAGE_PARK = "공원등"
-    USAGE_PARKING = "주차장등"
-    USAGE_FOREST = "임야기타"
-    USAGE_HOUSING_EMPTY = "주상나지"
-    USAGE_COMMERCIAL_EMPTY = "상업나지"
-    USAGE_TERMINAL = "물류터미널"
-    USAGE_STADIUM = "운동장등"
-    USAGE_DANGEROUS_FACILITY = "위험시설"
-    USAGE_WATERWAY = "하천등"
-    USAGE_INDUSTRY = "공업용"
-
-    USAGE_TO_EXCLUDE = [
-        USAGE_ROAD_1,
-        USAGE_WILDWOOD,
-        USAGE_PARK,
-        USAGE_PARKING,
-        USAGE_FOREST,
-        USAGE_HOUSING_EMPTY,
-        USAGE_COMMERCIAL_EMPTY,
-        USAGE_TERMINAL,
-        USAGE_STADIUM,
-        USAGE_DANGEROUS_FACILITY,
-        USAGE_WATERWAY,
-        USAGE_INDUSTRY,
-    ]
+    USAGE_ROAD_1 = "도로"
+    USAGE_ROAD_2 = "도로등"
+    USAGE_WATERWAY_1 = "하천"
+    USAGE_WATERWAY_2 = "하천등"

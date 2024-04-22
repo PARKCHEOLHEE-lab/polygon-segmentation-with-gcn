@@ -10,15 +10,18 @@ class DataConfiguration:
     OMBR_RATIO_WEIGHT = 0.67
     SLOPE_SIMILARITY_WEIGHT = 0.045
 
+    TOTAL_LANDS_FOLDER_COUNT = 19
+
     SHP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/shp"))
     SAVE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/processed"))
 
     LANDS_ZIP_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands_zip"))
     LANDS_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands"))
 
-    APT_STRING = "아파트"
-    APT_LAND_AREA_THRESHOLD = 1000
-    MRR_RATIO_THRESHOLD = 0.5
+    LAND_AREA_THRESHOLD = 500
+
+    MRR_RATIO_THRESHOLD_REGULAR = 0.83
+    MRR_RATIO_THRESHOLD_IRREGULAR = 0.7
 
 
 class ModelConfiguration:

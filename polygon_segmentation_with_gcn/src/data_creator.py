@@ -12,10 +12,11 @@ import shapely.ops
 import numpy as np
 import geopandas as gpd
 import shapely.affinity
+import zipfile36 as zipfile
 
 from typing import List, Tuple
-from src import commonutils
-from src.config import Configuration
+from src import commonutils, enums
+from src.config import DataConfiguration
 from shapely.geometry import Point, MultiPoint, Polygon, MultiLineString, LineString, CAP_STYLE, JOIN_STYLE
 
 
@@ -116,7 +117,7 @@ class DataCreatorHelper:
         return polygon_degrees
 
     @staticmethod
-    def simplify_polygon(polygon: Polygon, tolerance_degree: float = Configuration.TOLEARNCE_DEGREE) -> Polygon:
+    def simplify_polygon(polygon: Polygon, tolerance_degree: float = DataConfiguration.TOLEARNCE_DEGREE) -> Polygon:
         """Simplify a given polygon by removing vertices
 
         Args:
@@ -244,7 +245,7 @@ class DataCreatorHelper:
         return polygon_area / mrr_area
 
 
-class DataCreator(DataCreatorHelper):
+class DataCreator(DataCreatorHelper, DataConfiguration):
     def __init__(
         self,
         shp_dir: str,
@@ -253,9 +254,9 @@ class DataCreator(DataCreatorHelper):
         simplification_degree_factor: float = None,
         segment_threshold_length: float = None,
         includes_intersects_pts: bool = True,
-        even_area_weight: float = Configuration.EVEN_AREA_WEIGHT,
-        ombr_ratio_weight: float = Configuration.OMBR_RATIO_WEIGHT,
-        slope_similarity_weight: float = Configuration.SLOPE_SIMILARITY_WEIGHT,
+        even_area_weight: float = DataConfiguration.EVEN_AREA_WEIGHT,
+        ombr_ratio_weight: float = DataConfiguration.OMBR_RATIO_WEIGHT,
+        slope_similarity_weight: float = DataConfiguration.SLOPE_SIMILARITY_WEIGHT,
         is_debug_mode: bool = False,
     ):
         self.shp_dir = shp_dir
@@ -327,13 +328,13 @@ class DataCreator(DataCreatorHelper):
                     ipts = [ipts]
 
                 for ipt in ipts:
-                    if not polygon_vertices.buffer(Configuration.TOLERANCE).contains(ipt):
+                    if not polygon_vertices.buffer(self.TOLERANCE).contains(ipt):
                         if isinstance(ipt, Point):
                             intersects_pts_to_include.append(ipt)
 
             polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, intersects_pts_to_include)
 
-        buffered_polygon = polygon.buffer(Configuration.TOLERANCE, join_style=JOIN_STYLE.mitre)
+        buffered_polygon = polygon.buffer(self.TOLERANCE, join_style=JOIN_STYLE.mitre)
 
         triangulations = [tri for tri in shapely.ops.triangulate(polygon) if tri.within(buffered_polygon)]
         triangulations_filtered_by_area = [tri for tri in triangulations if tri.area >= polygon.area * 0.01]
@@ -341,9 +342,7 @@ class DataCreator(DataCreatorHelper):
 
         for tri in triangulations_filtered_by_area:
             for e in DataCreatorHelper.explode_polygon(tri):
-                if DataCreatorHelper.extend_linestring(
-                    e, -Configuration.TOLERANCE_LARGE, -Configuration.TOLERANCE_LARGE
-                ).within(polygon):
+                if DataCreatorHelper.extend_linestring(e, -self.TOLERANCE_LARGE, -self.TOLERANCE_LARGE).within(polygon):
                     is_already_existing = False
                     for other_e in triangulations_edges:
                         if e.equals(other_e):
@@ -394,7 +393,7 @@ class DataCreator(DataCreatorHelper):
             exterior_with_splitters = shapely.ops.unary_union(list(splitters) + self.explode_polygon(polygon))
 
             exterior_with_splitters = shapely.set_precision(
-                exterior_with_splitters, Configuration.TOLERANCE, mode="valid_output"
+                exterior_with_splitters, self.TOLERANCE, mode="valid_output"
             )
 
             exterior_with_splitters = shapely.ops.unary_union(exterior_with_splitters)
@@ -415,11 +414,9 @@ class DataCreator(DataCreatorHelper):
 
                 for ssi, split_segment in enumerate(split_segments):
                     reduced_split_segment = DataCreatorHelper.extend_linestring(
-                        split_segment, -Configuration.TOLERANCE, -Configuration.TOLERANCE
+                        split_segment, -self.TOLERANCE, -self.TOLERANCE
                     )
-                    buffered_split_segment = reduced_split_segment.buffer(
-                        Configuration.TOLERANCE, cap_style=CAP_STYLE.flat
-                    )
+                    buffered_split_segment = reduced_split_segment.buffer(self.TOLERANCE, cap_style=CAP_STYLE.flat)
 
                     if buffered_split_segment.intersects(MultiLineString(splitters)):
                         splitter_indices.append(ssi)
@@ -450,7 +447,7 @@ class DataCreator(DataCreatorHelper):
 
                 slopes = []
                 for splitter in splitters:
-                    if split.buffer(Configuration.TOLERANCE).intersects(splitter):
+                    if split.buffer(self.TOLERANCE).intersects(splitter):
                         slopes.append(self.compute_slope(splitter.coords[0], splitter.coords[1]))
 
                 splitter_main_slope = max(slopes, key=abs)
@@ -475,6 +472,34 @@ class DataCreator(DataCreatorHelper):
                 splitters_selceted = splitters
 
         return splits_selected, triangulations_edges, splitters_selceted
+
+    def _get_reglar_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """_summary_
+
+        Args:
+            lands_gdf (gpd.GeoDataFrame): _description_
+
+        Returns:
+            gpd.GeoDataFrame: _description_
+        """
+
+        lands_gdf_regular = lands_gdf[
+            (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_HORIZONTAL_RECTANGLE)
+            | (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_VERTICAL_RECTANGLE)
+            | (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_LADDER)
+            | (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_SQUARE)
+        ]
+
+        lands_gdf_regular = lands_gdf_regular[
+            lands_gdf_regular.apply(
+                lambda row: self.compute_mrr_ratio(row.geometry) >= self.MRR_RATIO_THRESHOLD_REGULAR, axis=1
+            )
+        ]
+
+        return lands_gdf_regular
+
+    def _get_irregular_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        return
 
     def create(self) -> None:
         """Process and create data from shp files using geopandas.
@@ -514,32 +539,51 @@ class DataCreator(DataCreatorHelper):
 
         """
 
-        for folder in os.listdir(self.shp_dir):
-            for shp_file in os.listdir(os.path.join(self.shp_dir, folder)):
+        os.makedirs(self.LANDS_PATH, exist_ok=True)
+        if len(os.listdir(self.LANDS_PATH)) < self.TOTAL_LANDS_FOLDER_COUNT:
+            for file_name in os.listdir(self.LANDS_ZIP_PATH):
+                file_path = os.path.join(self.LANDS_ZIP_PATH, file_name)
+
+                with zipfile.ZipFile(file_path, "r") as zip_ref:
+                    zip_ref.extractall(self.LANDS_PATH)
+
+        for folder in os.listdir(self.LANDS_PATH):
+            folder_path = os.path.join(self.LANDS_PATH, folder)
+            for shp_file in os.listdir(folder_path):
                 if not shp_file.endswith(".shp"):
                     continue
 
-                shp_path = os.path.join(self.shp_dir, folder, shp_file)
-                gdf = gpd.read_file(shp_path, encoding="CP949")
+                original_lands_gdf = gpd.read_file(filename=os.path.join(folder_path, shp_file), encoding="CP949")
 
-                apt_gdf = gdf[gdf.iloc[:, 18] == Configuration.APT_STRING]
-                apt_gdf = apt_gdf[apt_gdf["geometry"].area > Configuration.APT_LAND_AREA_THRESHOLD]
+                lands_gdf = original_lands_gdf[
+                    (original_lands_gdf.geometry.area >= self.LAND_AREA_THRESHOLD)
+                    & (~original_lands_gdf.iloc[:, 18].isna())
+                    & (original_lands_gdf.iloc[:, 11] != enums.LandUsage.USAGE_ROAD_1)
+                    & (original_lands_gdf.iloc[:, 11] != enums.LandUsage.USAGE_WATERWAY_1)
+                    & (original_lands_gdf.iloc[:, 18] != enums.LandUsage.USAGE_ROAD_2)
+                    & (original_lands_gdf.iloc[:, 18] != enums.LandUsage.USAGE_WATERWAY_2)
+                ]
 
-                for _, row in apt_gdf.iterrows():
-                    geometry = row["geometry"]
-                    simplified_geometry = self.simplify_polygon(geometry, tolerance_degree=1.0)
-                    normalized_geometry = self.normalize_polygon(simplified_geometry)
-
-                    mrr_ratio = self.compute_mrr_ratio(normalized_geometry)
-                    if mrr_ratio < Configuration.MRR_RATIO_THRESHOLD:
-                        pass
+                _ = self._get_reglar_lands(lands_gdf)
+                # _ = self._get_irregular_lands(lands_gdf)
 
         os.makedirs(self.save_dir, exist_ok=True)
 
         pass
 
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
+    data_creator = DataCreator(
+        shp_dir=DataConfiguration.SHP_PATH,
+        save_dir=DataConfiguration.SAVE_PATH,
+        number_to_split=2,
+        simplification_degree_factor=1.0,
+        segment_threshold_length=5.0,
+        includes_intersects_pts=True,
+        is_debug_mode=True,
+    )
+
+    data_creator.create()
 
 #     is_debug_mode = True
 #     if is_debug_mode:
