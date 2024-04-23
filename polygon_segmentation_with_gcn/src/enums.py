@@ -48,5 +48,9 @@ class LandUsage:
 
     USAGE_ROAD_1 = "도로"
     USAGE_ROAD_2 = "도로등"
+
     USAGE_WATERWAY_1 = "하천"
     USAGE_WATERWAY_2 = "하천등"
+
+    USAGE_PARK_1 = "공원"
+    USAGE_PARK_2 = "공원등"

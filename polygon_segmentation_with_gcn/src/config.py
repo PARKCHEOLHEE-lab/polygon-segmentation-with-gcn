@@ -18,10 +18,18 @@ class DataConfiguration:
     LANDS_ZIP_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands_zip"))
     LANDS_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands"))
 
+    IMG_QA_PATH = os.path.abspath(os.path.join(SAVE_PATH, "qa"))
+    IMG_QA_NAME_REGULAR = "lands_gdf_regular.png"
+    IMG_QA_NAME_IRREGULAR = "lands_gdf_irregular.png"
+
     LAND_AREA_THRESHOLD = 500
 
-    MRR_RATIO_THRESHOLD_REGULAR = 0.83
-    MRR_RATIO_THRESHOLD_IRREGULAR = 0.7
+    THRESHOLD_MRR_RATIO_REGULAR = 0.83
+    THREHSOLD_MRR_RATIO_IRREGULAR_MAX = 0.53
+    THREHSOLD_MRR_RATIO_IRREGULAR_MIN = 0.4
+    THREHSOLD_INNDER_DEGREE_SUM_IRREGULAR = 850
+
+    SIMPLIFICATION_DEGREE = 15.0
 
 
 class ModelConfiguration:

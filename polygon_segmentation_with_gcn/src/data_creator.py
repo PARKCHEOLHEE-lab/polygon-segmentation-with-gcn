@@ -7,13 +7,17 @@ if os.path.abspath(os.path.join(__file__, "../../")) not in sys.path:
 if os.path.abspath(os.path.join(__file__, "../../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(__file__, "../../../")))
 
+import io
 import itertools
 import shapely.ops
 import numpy as np
 import geopandas as gpd
 import shapely.affinity
 import zipfile36 as zipfile
+import matplotlib.pyplot as plt
 
+
+from PIL import Image
 from typing import List, Tuple
 from src import commonutils, enums
 from src.config import DataConfiguration
@@ -245,7 +249,7 @@ class DataCreatorHelper:
         return polygon_area / mrr_area
 
 
-class DataCreator(DataCreatorHelper, DataConfiguration):
+class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.LandUsage):
     def __init__(
         self,
         shp_dir: str,
@@ -473,6 +477,46 @@ class DataCreator(DataCreatorHelper, DataConfiguration):
 
         return splits_selected, triangulations_edges, splitters_selceted
 
+    def _get_initial_lands_gdf(self, original_lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """_summary_
+
+        Args:
+            original_lands_gdf (gpd.GeoDataFrame): _description_
+
+        Returns:
+            gpd.GeoDataFrame: _description_
+        """
+
+        lands_gdf = original_lands_gdf[
+            (original_lands_gdf.geometry.area >= self.LAND_AREA_THRESHOLD)
+            & (~original_lands_gdf.iloc[:, 18].isna())
+            & (original_lands_gdf.iloc[:, 11] != self.USAGE_ROAD_1)
+            & (original_lands_gdf.iloc[:, 11] != self.USAGE_WATERWAY_1)
+            & (original_lands_gdf.iloc[:, 11] != self.USAGE_PARK_1)
+            & (original_lands_gdf.iloc[:, 18] != self.USAGE_ROAD_2)
+            & (original_lands_gdf.iloc[:, 18] != self.USAGE_WATERWAY_2)
+            & (original_lands_gdf.iloc[:, 18] != self.USAGE_PARK_2)
+        ]
+
+        lands_gdf["geometry"] = lands_gdf.apply(lambda row: Polygon(row.geometry.exterior.coords), axis=1)
+
+        lands_gdf["normalized_geometry"] = lands_gdf.apply(lambda row: self.normalize_polygon(row.geometry), axis=1)
+
+        lands_gdf["simplified_geometry"] = lands_gdf.apply(
+            lambda row: self.simplify_polygon(row.normalized_geometry, self.SIMPLIFICATION_DEGREE), axis=1
+        )
+
+        lands_gdf["simplified_geometry_mrr_ratio"] = lands_gdf.apply(
+            lambda row: self.compute_mrr_ratio(row.simplified_geometry),
+            axis=1,
+        )
+
+        lands_gdf["simplified_geometry_degree_sum"] = lands_gdf.apply(
+            lambda row: sum(self.compute_polyon_degrees(row.simplified_geometry)), axis=1
+        )
+
+        return lands_gdf
+
     def _get_reglar_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """_summary_
 
@@ -484,22 +528,126 @@ class DataCreator(DataCreatorHelper, DataConfiguration):
         """
 
         lands_gdf_regular = lands_gdf[
-            (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_HORIZONTAL_RECTANGLE)
-            | (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_VERTICAL_RECTANGLE)
-            | (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_LADDER)
-            | (lands_gdf.iloc[:, 22] == enums.LandShape.SHAPE_SQUARE)
+            (lands_gdf.iloc[:, 22] == self.SHAPE_HORIZONTAL_RECTANGLE)
+            | (lands_gdf.iloc[:, 22] == self.SHAPE_VERTICAL_RECTANGLE)
+            | (lands_gdf.iloc[:, 22] == self.SHAPE_LADDER)
+            | (lands_gdf.iloc[:, 22] == self.SHAPE_SQUARE)
         ]
 
         lands_gdf_regular = lands_gdf_regular[
             lands_gdf_regular.apply(
-                lambda row: self.compute_mrr_ratio(row.geometry) >= self.MRR_RATIO_THRESHOLD_REGULAR, axis=1
+                lambda row: row.simplified_geometry_mrr_ratio >= self.THRESHOLD_MRR_RATIO_REGULAR, axis=1
             )
         ]
 
         return lands_gdf_regular
 
     def _get_irregular_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-        return
+        """_summary_
+
+        Args:
+            lands_gdf (gpd.GeoDataFrame): _description_
+
+        Returns:
+            gpd.GeoDataFrame: _description_
+        """
+
+        lands_gdf_irregular = lands_gdf[
+            (lands_gdf.iloc[:, 22] == self.SHAPE_IRREGULARITY)
+            | (lands_gdf.iloc[:, 22] == self.SHAPE_FLAG)
+            | (lands_gdf.iloc[:, 22] == self.SHAPE_UNDEFINED)
+        ]
+
+        th1 = self.THREHSOLD_MRR_RATIO_IRREGULAR_MAX
+        th2 = self.THREHSOLD_MRR_RATIO_IRREGULAR_MIN
+        th3 = self.THREHSOLD_INNDER_DEGREE_SUM_IRREGULAR
+
+        lands_gdf_irregular = lands_gdf_irregular[
+            (lands_gdf_irregular.apply(lambda row: th2 < row.simplified_geometry_mrr_ratio <= th1, axis=1))
+            & (lands_gdf_irregular.apply(lambda row: row.simplified_geometry_degree_sum >= th3, axis=1))
+        ]
+
+        return lands_gdf_irregular
+
+    def _visualize_geometries_as_grid(self, lands_gdf: gpd.GeoDataFrame, save_path: str) -> None:
+        """_summary_
+
+        Args:
+            geometries (_type_): _description_
+            ncols (_type_): _description_
+            figsize (tuple, optional): _description_. Defaults to (15, 15).
+            save_path (str, optional): _description_. Defaults to "./".
+            title (str, optional): _description_. Defaults to "".
+        """
+
+        def fig_to_img(figure):
+            buf = io.BytesIO()
+            figure.savefig(buf)
+            buf.seek(0)
+            image = Image.open(buf)
+
+            return image
+
+        dpi = 100
+        figsize = (5, 5)
+        col_num = 4
+        row_num = int(np.ceil(lands_gdf.normalized_geometry.shape[0] / col_num))
+        img_size = figsize[0] * dpi
+        merged_image = Image.new("RGB", (col_num * img_size, row_num * img_size), "white")
+
+        current_cols = 0
+        output_height = 0
+        output_width = 0
+        color = "black"
+
+        for ri, row in lands_gdf.iterrows():
+            figure = plt.figure(figsize=figsize, dpi=dpi)
+
+            ax = figure.add_subplot(1, 1, 1)
+            ax.axis("equal")
+
+            ax.plot(*row.simplified_geometry.boundary.coords.xy, color=color, linewidth=0.6)
+            ax.fill(*row.simplified_geometry.boundary.coords.xy, alpha=0.1, color=color)
+
+            x, y = row.simplified_geometry.boundary.coords.xy
+            ax.scatter(x, y, color="red", s=7)
+
+            ax.grid(True, color="lightgray")
+
+            annotation = f"""
+                index: {ri}
+                mrr_ratio: {row.simplified_geometry_mrr_ratio:.5f}
+                degree_sum: {row.simplified_geometry_degree_sum:.5f}
+                name: {save_path.split("processed")[-1]}
+            """
+
+            plt.axis([-2.0, 2.0, -2.0, 2.0])
+
+            plt.gcf().text(
+                0.5,
+                0.2,
+                annotation,
+                va="center",
+                ha="center",
+                color="black",
+                fontsize=8,
+            )
+
+            image = fig_to_img(figure)
+
+            merged_image.paste(image, (output_width, output_height))
+
+            current_cols += 1
+            if current_cols >= col_num:
+                output_width = 0
+                output_height += img_size
+                current_cols = 0
+            else:
+                output_width += img_size
+
+            plt.close(figure)
+
+        merged_image.save(save_path)
 
     def create(self) -> None:
         """Process and create data from shp files using geopandas.
@@ -553,23 +701,27 @@ class DataCreator(DataCreatorHelper, DataConfiguration):
                 if not shp_file.endswith(".shp"):
                     continue
 
-                original_lands_gdf = gpd.read_file(filename=os.path.join(folder_path, shp_file), encoding="CP949")
+                _lands_gdf = gpd.read_file(filename=os.path.join(folder_path, shp_file), encoding="CP949")
 
-                lands_gdf = original_lands_gdf[
-                    (original_lands_gdf.geometry.area >= self.LAND_AREA_THRESHOLD)
-                    & (~original_lands_gdf.iloc[:, 18].isna())
-                    & (original_lands_gdf.iloc[:, 11] != enums.LandUsage.USAGE_ROAD_1)
-                    & (original_lands_gdf.iloc[:, 11] != enums.LandUsage.USAGE_WATERWAY_1)
-                    & (original_lands_gdf.iloc[:, 18] != enums.LandUsage.USAGE_ROAD_2)
-                    & (original_lands_gdf.iloc[:, 18] != enums.LandUsage.USAGE_WATERWAY_2)
-                ]
+                lands_gdf = self._get_initial_lands_gdf(_lands_gdf)
+                lands_gdf_regular = self._get_reglar_lands(lands_gdf)
+                lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
 
-                _ = self._get_reglar_lands(lands_gdf)
-                # _ = self._get_irregular_lands(lands_gdf)
+                if self.is_debug_mode:
+                    image_qa_path = os.path.join(self.IMG_QA_PATH, folder)
+                    os.makedirs(image_qa_path, exist_ok=True)
 
-        os.makedirs(self.save_dir, exist_ok=True)
+                    self._visualize_geometries_as_grid(
+                        lands_gdf=lands_gdf_regular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_REGULAR)
+                    )
+                    self._visualize_geometries_as_grid(
+                        lands_gdf=lands_gdf_irregular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_IRREGULAR)
+                    )
 
-        pass
+                break
+            break
+
+        # os.makedirs(self.save_dir, exist_ok=True)
 
 
 if __name__ == "__main__":
@@ -584,74 +736,3 @@ if __name__ == "__main__":
     )
 
     data_creator.create()
-
-#     is_debug_mode = True
-#     if is_debug_mode:
-#         commonutils.add_debugvisualizer(globals())
-
-#     import numpy as np
-#     np.random.seed(0)
-
-#     def _get_random_coordinates(
-#         vertices_count_min: int, vertices_count_max: int, scale_factor: float = 1.0
-#     ) -> np.ndarray:
-#         """Generate non-intersected polygon randomly
-
-#         Args:
-#             vertices_count_min (int): random vertices count minimum value
-#             vertices_count_max (int): random vertices count maximum value
-#             scale_factor (float, optional): constant to scale. Defaults to 1.0.
-
-#         Returns:
-#             np.ndarray: random coordinates
-#         """
-
-#         vertices_count = np.random.randint(vertices_count_min, vertices_count_max)
-#         vertices = np.random.rand(vertices_count, 2)
-#         vertices_centroid = np.mean(vertices, axis=0)
-
-#         coordinates = sorted(vertices, key=lambda p, c=vertices_centroid: np.arctan2(p[1] - c[1], p[0] - c[0]))
-
-#         coordinates = np.array(coordinates)
-#         coordinates[:, 0] *= scale_factor
-#         coordinates[:, 1] *= scale_factor
-
-#         return coordinates
-
-#     p = Polygon([[0, 0], [0, 1], [1, 1], [2, 2], [2, 0]])
-#     DataCreatorHelper.compute_polyon_degrees(p)
-
-#     p_ = Polygon(_get_random_coordinates(5, 20)).convex_hull
-#     p = DataCreatorHelper.simplify_polygon(
-#         polygon=p_,
-#         tolerance_degree=30
-#     )
-
-#     p_ = Polygon(_get_random_coordinates(5, 20))
-#     p = DataCreatorHelper.simplify_polygon(
-#         polygon=p_,
-#         tolerance_degree=30
-#     )
-
-#     data_creator = DataCreator(
-#         shp_dir=Configuration.SHP_PATH,
-#         save_dir=Configuration.SAVE_PATH,
-#         number_to_split=2,
-#         simplification_degree_factor=1.0,
-#         segment_threshold_length=5.0,
-#         includes_intersects_pts=True,
-#         is_debug_mode=True
-#     )
-
-#     data_creator.create()
-
-#     data_creator.segment_polygon(
-#         polygon=p,
-#         number_to_split=2,
-#         simplification_degree_factor=1.0,
-#         segment_threshold_length=5.0,
-#         includes_intersects_pts=True,
-#         even_area_weight=0.34,
-#         ombr_ratio_weight=0.67,
-#         slope_similarity_weight=0.045,
-#     )
