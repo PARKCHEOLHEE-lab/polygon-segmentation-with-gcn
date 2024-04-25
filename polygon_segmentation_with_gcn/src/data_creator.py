@@ -8,20 +8,32 @@ if os.path.abspath(os.path.join(__file__, "../../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(__file__, "../../../")))
 
 import io
+import shapely
+import traceback
+import pygeoops
 import itertools
-import shapely.ops
 import numpy as np
+import multiprocessing
 import geopandas as gpd
-import shapely.affinity
 import zipfile36 as zipfile
 import matplotlib.pyplot as plt
 
 
 from PIL import Image
 from typing import List, Tuple
+from shapely import ops, affinity
 from src import commonutils, enums
 from src.config import DataConfiguration
-from shapely.geometry import Point, MultiPoint, Polygon, MultiLineString, LineString, CAP_STYLE, JOIN_STYLE
+from shapely.geometry import (
+    Point,
+    MultiPoint,
+    Polygon,
+    MultiPolygon,
+    MultiLineString,
+    LineString,
+    CAP_STYLE,
+    JOIN_STYLE,
+)
 
 
 class DataCreatorHelper:
@@ -87,6 +99,9 @@ class DataCreatorHelper:
 
     @staticmethod
     def compute_slope(p1: np.ndarray, p2: np.ndarray) -> float:
+        if np.isclose(p2[0] - p1[0], 0):
+            return -np.inf
+
         return (p2[1] - p1[1]) / (p2[0] - p1[0])
 
     @staticmethod
@@ -144,6 +159,9 @@ class DataCreatorHelper:
         for degree, coord in zip(polygon_degrees, exterior_coordinates):
             if not (180 - tolerance_degree < degree < 180 + tolerance_degree):
                 simplified_coordinates.append(coord)
+
+        if len(simplified_coordinates) < 3:
+            return polygon
 
         return Polygon(simplified_coordinates)
 
@@ -211,6 +229,42 @@ class DataCreatorHelper:
         return inserted_polygon
 
     @staticmethod
+    def insert_intersected_vertices(polygon: Polygon) -> Polygon:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            Polygon: _description_
+        """
+
+        intersects_pts_to_include = []
+        polygon_segments = DataCreatorHelper.explode_polygon(polygon)
+        polygon_vertices = MultiPoint(polygon.boundary.coords)
+
+        for segment in polygon_segments:
+            extended_segment = affinity.scale(segment, 100, 100)
+
+            ipts = extended_segment.intersection(polygon.boundary)
+            if ipts.is_empty:
+                continue
+
+            if isinstance(ipts, MultiPoint):
+                ipts = list(ipts.geoms)
+            else:
+                ipts = [ipts]
+
+            for ipt in ipts:
+                if not polygon_vertices.buffer(DataConfiguration.TOLERANCE).contains(ipt):
+                    if isinstance(ipt, Point):
+                        intersects_pts_to_include.append(ipt)
+
+        inserted_polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, intersects_pts_to_include)
+
+        return inserted_polygon
+
+    @staticmethod
     def normalize_polygon(polygon: Polygon) -> Polygon:
         """Centralize a given polygon to (0, 0) and normalize it to (-1, 1).
 
@@ -248,6 +302,92 @@ class DataCreatorHelper:
 
         return polygon_area / mrr_area
 
+    @staticmethod
+    def erode_and_dilate_polygon(polygon: Polygon, buffer_distance: float) -> Polygon:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+            buffer_distance (float): _description_
+
+        Returns:
+            Polygon: _description_
+        """
+
+        eroded = polygon.buffer(-buffer_distance, join_style=JOIN_STYLE.mitre)
+        if isinstance(eroded, MultiPolygon):
+            eroded = max(eroded.geoms, key=lambda e: e.area)
+
+        dilated = eroded.buffer(buffer_distance, join_style=JOIN_STYLE.mitre)
+
+        return dilated
+
+    @staticmethod
+    def dilate_and_erode_polygon(polygon: Polygon, buffer_distance: float) -> Polygon:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+            buffer_distance (float): _description_
+
+        Returns:
+            Polygon: _description_
+        """
+
+        dilated = polygon.buffer(buffer_distance, join_style=JOIN_STYLE.mitre)
+        eroded = dilated.buffer(-buffer_distance, join_style=JOIN_STYLE.mitre)
+
+        if isinstance(eroded, MultiPolygon):
+            eroded = max(eroded.geoms, key=lambda e: e.area)
+
+        if len(eroded.interiors) > 0:
+            eroded = Polygon(eroded.exterior.coords)
+
+        return eroded
+
+    @staticmethod
+    def get_polygon_centerline(polygon: Polygon, simplification_tolerance: float = 0.0, **kwargs) -> LineString:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+            simplification_tolerance (float, optional): _description_. Defaults to 0.0.
+
+        Returns:
+            LineString: _description_
+        """
+
+        try:
+            centerline = pygeoops.centerline(polygon, **kwargs)
+
+            if isinstance(centerline, MultiLineString):
+                centerline = max(centerline.geoms, key=lambda g: g.length)
+
+            centerline = centerline.simplify(simplification_tolerance)
+
+            return centerline
+
+        except Exception as e:
+            print(f"Error encountered: {e}")
+            traceback.print_exc()
+            return LineString()
+
+    @staticmethod
+    def get_polygon_created_by_exterior(polygon: Polygon) -> Polygon:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            Polygon: _description_
+        """
+
+        if isinstance(polygon, MultiPolygon):
+            polygon = max(polygon.geoms, key=lambda g: g.area)
+
+        return Polygon(polygon.exterior.coords)
+
 
 class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.LandUsage):
     def __init__(
@@ -257,7 +397,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         number_to_split: int,
         simplification_degree_factor: float = None,
         segment_threshold_length: float = None,
-        includes_intersects_pts: bool = True,
         even_area_weight: float = DataConfiguration.EVEN_AREA_WEIGHT,
         ombr_ratio_weight: float = DataConfiguration.OMBR_RATIO_WEIGHT,
         slope_similarity_weight: float = DataConfiguration.SLOPE_SIMILARITY_WEIGHT,
@@ -268,7 +407,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         self.number_to_split = number_to_split
         self.simplification_degree_factor = simplification_degree_factor
         self.segment_threshold_length = segment_threshold_length
-        self.includes_intersects_pts = includes_intersects_pts
         self.even_area_weight = even_area_weight
         self.ombr_ratio_weight = ombr_ratio_weight
         self.slope_similarity_weight = slope_similarity_weight
@@ -280,9 +418,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
     def triangulate_polygon(
         self,
         polygon: Polygon,
-        simplification_degree_factor: float,
         segment_threshold_length: float,
-        includes_intersects_pts: bool,
     ) -> Tuple[List[Polygon], List[LineString]]:
         """_summary_
 
@@ -290,14 +426,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             polygon (Polygon): _description_
             simplification_degree_factor (float, optional): _description_. Defaults to None.
             segment_threshold_length (float, optional): _description_. Defaults to None.
-            includes_intersects_pts (bool, optional): _description_. Defaults to True.
 
         Returns:
             Polygon: _description_
         """
-
-        if isinstance(simplification_degree_factor, float):
-            polygon = DataCreatorHelper.simplify_polygon(polygon, simplification_degree_factor)
 
         if isinstance(segment_threshold_length, float):
             polygon_segments = DataCreatorHelper.explode_polygon(polygon)
@@ -314,33 +446,9 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
             polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, vertices_to_insert)
 
-        if includes_intersects_pts:
-            intersects_pts_to_include = []
-            polygon_segments = DataCreatorHelper.explode_polygon(polygon)
-            polygon_vertices = MultiPoint(polygon.boundary.coords)
-
-            for segment in polygon_segments:
-                extended_segment = shapely.affinity.scale(segment, 100, 100)
-
-                ipts = extended_segment.intersection(polygon.boundary)
-                if ipts.is_empty:
-                    continue
-
-                if isinstance(ipts, MultiPoint):
-                    ipts = list(ipts.geoms)
-                else:
-                    ipts = [ipts]
-
-                for ipt in ipts:
-                    if not polygon_vertices.buffer(self.TOLERANCE).contains(ipt):
-                        if isinstance(ipt, Point):
-                            intersects_pts_to_include.append(ipt)
-
-            polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, intersects_pts_to_include)
-
         buffered_polygon = polygon.buffer(self.TOLERANCE, join_style=JOIN_STYLE.mitre)
 
-        triangulations = [tri for tri in shapely.ops.triangulate(polygon) if tri.within(buffered_polygon)]
+        triangulations = [tri for tri in ops.triangulate(polygon) if tri.within(buffered_polygon)]
         triangulations_filtered_by_area = [tri for tri in triangulations if tri.area >= polygon.area * 0.01]
         triangulations_edges = []
 
@@ -362,9 +470,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         self,
         polygon: Polygon,
         number_to_split: int,
-        simplification_degree_factor: float,
         segment_threshold_length: float,
-        includes_intersects_pts: bool,
         even_area_weight: float,
         ombr_ratio_weight: float,
         slope_similarity_weight: float,
@@ -376,7 +482,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             number_to_split (int): _description_
             simplification_degree_factor (float): _description_
             segment_threshold_length (float): _description_
-            includes_intersects_pts (bool): _description_
             even_area_weight (float): _description_
             ombr_ratio_weight (float): _description_
             slope_similarity_weight (float): _description_
@@ -384,9 +489,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
         _, triangulations_edges = self.triangulate_polygon(
             polygon=polygon,
-            simplification_degree_factor=simplification_degree_factor,
             segment_threshold_length=segment_threshold_length,
-            includes_intersects_pts=includes_intersects_pts,
         )
 
         splitters_selceted = None
@@ -394,15 +497,15 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         splits_score = None
 
         for splitters in list(itertools.combinations(triangulations_edges, number_to_split - 1)):
-            exterior_with_splitters = shapely.ops.unary_union(list(splitters) + self.explode_polygon(polygon))
+            exterior_with_splitters = ops.unary_union(list(splitters) + self.explode_polygon(polygon))
 
             exterior_with_splitters = shapely.set_precision(
-                exterior_with_splitters, self.TOLERANCE, mode="valid_output"
+                exterior_with_splitters, self.TOLERANCE_LARGE, mode="valid_output"
             )
 
-            exterior_with_splitters = shapely.ops.unary_union(exterior_with_splitters)
+            exterior_with_splitters = ops.unary_union(exterior_with_splitters)
 
-            splits = list(shapely.ops.polygonize(exterior_with_splitters))
+            splits = list(ops.polygonize(exterior_with_splitters))
 
             if len(splits) != number_to_split:
                 continue
@@ -417,8 +520,11 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 splitter_indices = []
 
                 for ssi, split_segment in enumerate(split_segments):
+                    if split_segment.length <= self.TOLERANCE_LARGE * 2:
+                        continue
+
                     reduced_split_segment = DataCreatorHelper.extend_linestring(
-                        split_segment, -self.TOLERANCE, -self.TOLERANCE
+                        split_segment, -self.TOLERANCE_LARGE, -self.TOLERANCE_LARGE
                     )
                     buffered_split_segment = reduced_split_segment.buffer(self.TOLERANCE, cap_style=CAP_STYLE.flat)
 
@@ -426,7 +532,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                         splitter_indices.append(ssi)
                         splitter_indices.append(ssi + 1)
 
-                if (np.array([degree for degree in self.compute_polyon_degrees(split)])[splitter_indices] < 20).sum():
+                degrees = self.compute_polyon_degrees(split)
+                degrees += [degrees[0]]
+
+                if (np.array(degrees)[splitter_indices] < 20).sum():
                     is_acute_angle_in = True
                     break
 
@@ -451,7 +560,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
                 slopes = []
                 for splitter in splitters:
-                    if split.buffer(self.TOLERANCE).intersects(splitter):
+                    if split.buffer(self.TOLERANCE_LARGE).intersects(splitter):
                         slopes.append(self.compute_slope(splitter.coords[0], splitter.coords[1]))
 
                 splitter_main_slope = max(slopes, key=abs)
@@ -477,7 +586,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
         return splits_selected, triangulations_edges, splitters_selceted
 
-    def _get_initial_lands_gdf(self, original_lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    @commonutils.runtime_calculator
+    def _get_initial_lands_gdf(
+        self, original_lands_gdf: gpd.GeoDataFrame, use_multiprocessing: bool = True
+    ) -> gpd.GeoDataFrame:
         """_summary_
 
         Args:
@@ -492,28 +604,73 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             & (~original_lands_gdf.iloc[:, 18].isna())
             & (original_lands_gdf.iloc[:, 11] != self.USAGE_ROAD_1)
             & (original_lands_gdf.iloc[:, 11] != self.USAGE_WATERWAY_1)
-            & (original_lands_gdf.iloc[:, 11] != self.USAGE_PARK_1)
+            # & (original_lands_gdf.iloc[:, 11] != self.USAGE_PARK_1)
             & (original_lands_gdf.iloc[:, 18] != self.USAGE_ROAD_2)
             & (original_lands_gdf.iloc[:, 18] != self.USAGE_WATERWAY_2)
-            & (original_lands_gdf.iloc[:, 18] != self.USAGE_PARK_2)
+            # & (original_lands_gdf.iloc[:, 18] != self.USAGE_PARK_2)
+            & (original_lands_gdf.iloc[:, 18] != self.USAGE_DITCH)
         ]
 
-        lands_gdf["geometry"] = lands_gdf.apply(lambda row: Polygon(row.geometry.exterior.coords), axis=1)
+        if use_multiprocessing:
+            with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+                lands_gdf["geometry"] = pool.apply_async(
+                    lambda row: Polygon(row.geometry.exterior.coords)
+                    if isinstance(row.geometry, Polygon)
+                    else Polygon(max(row.geometry.geoms, key=lambda g: g.area).exterior.coords),
+                    axis=1,
+                )
 
-        lands_gdf["normalized_geometry"] = lands_gdf.apply(lambda row: self.normalize_polygon(row.geometry), axis=1)
+        else:
+            lands_gdf["geometry"] = lands_gdf.apply(
+                lambda row: Polygon(row.geometry.exterior.coords)
+                if isinstance(row.geometry, Polygon)
+                else Polygon(max(row.geometry.geoms, key=lambda g: g.area).exterior.coords),
+                axis=1,
+            )
 
-        lands_gdf["simplified_geometry"] = lands_gdf.apply(
-            lambda row: self.simplify_polygon(row.normalized_geometry, self.SIMPLIFICATION_DEGREE), axis=1
-        )
+            lands_gdf["normalized_geometry"] = lands_gdf.apply(lambda row: self.normalize_polygon(row.geometry), axis=1)
 
-        lands_gdf["simplified_geometry_mrr_ratio"] = lands_gdf.apply(
-            lambda row: self.compute_mrr_ratio(row.simplified_geometry),
-            axis=1,
-        )
+            lands_gdf["buffered_geometry"] = lands_gdf.apply(
+                lambda row: self.erode_and_dilate_polygon(row.normalized_geometry, 0.15), axis=1
+            )
 
-        lands_gdf["simplified_geometry_degree_sum"] = lands_gdf.apply(
-            lambda row: sum(self.compute_polyon_degrees(row.simplified_geometry)), axis=1
-        )
+            lands_gdf["buffered_geometry"] = lands_gdf.apply(
+                lambda row: self.dilate_and_erode_polygon(row.buffered_geometry, 0.45), axis=1
+            )
+
+            lands_gdf = lands_gdf[~lands_gdf.buffered_geometry.is_empty]
+
+            lands_gdf["buffered_geometry"] = lands_gdf.apply(
+                lambda row: Polygon(row.buffered_geometry.exterior.coords), axis=1
+            )
+
+            lands_gdf["simplified_geometry"] = lands_gdf.apply(
+                lambda row: self.simplify_polygon(row.buffered_geometry, self.SIMPLIFICATION_DEGREE), axis=1
+            )
+
+            lands_gdf = lands_gdf[lands_gdf.simplified_geometry.is_valid]
+
+            lands_gdf["simplified_geometry_centerline"] = lands_gdf.apply(
+                lambda row: self.get_polygon_centerline(
+                    row.simplified_geometry, self.TOLERANCE_CENTERLINE, min_branch_length=0.45
+                ),
+                axis=1,
+            )
+
+            lands_gdf = lands_gdf[~lands_gdf.simplified_geometry_centerline.is_empty]
+
+            lands_gdf["simplified_geometry_mrr_ratio"] = lands_gdf.apply(
+                lambda row: self.compute_mrr_ratio(row.simplified_geometry),
+                axis=1,
+            )
+
+            lands_gdf["simplified_geometry_degree_sum"] = lands_gdf.apply(
+                lambda row: sum(self.compute_polyon_degrees(row.simplified_geometry)), axis=1
+            )
+
+            lands_gdf["axes_count"] = lands_gdf.apply(
+                lambda row: max(0, len(row.simplified_geometry_centerline.coords) - 1), axis=1
+            )
 
         return lands_gdf
 
@@ -558,18 +715,37 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             | (lands_gdf.iloc[:, 22] == self.SHAPE_UNDEFINED)
         ]
 
-        th1 = self.THREHSOLD_MRR_RATIO_IRREGULAR_MAX
-        th2 = self.THREHSOLD_MRR_RATIO_IRREGULAR_MIN
-        th3 = self.THREHSOLD_INNDER_DEGREE_SUM_IRREGULAR
+        th1 = self.THRESHOLD_MRR_RATIO_IRREGULAR_MAX
+        th2 = self.THRESHOLD_MRR_RATIO_IRREGULAR_MIN
+        th3 = self.THRESHOLD_INNDER_DEGREE_SUM_IRREGULAR
 
         lands_gdf_irregular = lands_gdf_irregular[
             (lands_gdf_irregular.apply(lambda row: th2 < row.simplified_geometry_mrr_ratio <= th1, axis=1))
             & (lands_gdf_irregular.apply(lambda row: row.simplified_geometry_degree_sum >= th3, axis=1))
+            & (lands_gdf_irregular.apply(lambda row: 2 <= row.axes_count <= 3, axis=1))
         ]
+
+        lands_gdf_irregular["simplified_geometry"] = lands_gdf_irregular.apply(
+            lambda row: self.insert_intersected_vertices(row.simplified_geometry), axis=1
+        )
+
+        lands_gdf_irregular["splitters"] = lands_gdf_irregular.apply(
+            lambda row: self.segment_polygon(
+                polygon=row.simplified_geometry,
+                number_to_split=row.axes_count,
+                segment_threshold_length=self.SEGMENT_DIVIDE_BASELINE,
+                even_area_weight=self.EVEN_AREA_WEIGHT,
+                ombr_ratio_weight=self.OMBR_RATIO_WEIGHT,
+                slope_similarity_weight=self.SLOPE_SIMILARITY_WEIGHT,
+            )[-1],
+            axis=1,
+        )
 
         return lands_gdf_irregular
 
-    def _visualize_geometries_as_grid(self, lands_gdf: gpd.GeoDataFrame, save_path: str) -> None:
+    def _visualize_geometries_as_grid(
+        self, lands_gdf: gpd.GeoDataFrame, save_path: str, max_size_to_visualize: int = 1000
+    ) -> None:
         """_summary_
 
         Args:
@@ -589,9 +765,9 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             return image
 
         dpi = 100
-        figsize = (5, 5)
+        figsize = (4, 4)
         col_num = 4
-        row_num = int(np.ceil(lands_gdf.normalized_geometry.shape[0] / col_num))
+        row_num = int(np.ceil(min(lands_gdf.simplified_geometry.shape[0], max_size_to_visualize) / col_num))
         img_size = figsize[0] * dpi
         merged_image = Image.new("RGB", (col_num * img_size, row_num * img_size), "white")
 
@@ -600,7 +776,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         output_width = 0
         color = "black"
 
-        for ri, row in lands_gdf.iterrows():
+        for ri, (loc, row) in enumerate(lands_gdf.iterrows()):
+            if ri >= max_size_to_visualize:
+                break
+
             figure = plt.figure(figsize=figsize, dpi=dpi)
 
             ax = figure.add_subplot(1, 1, 1)
@@ -609,22 +788,27 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             ax.plot(*row.simplified_geometry.boundary.coords.xy, color=color, linewidth=0.6)
             ax.fill(*row.simplified_geometry.boundary.coords.xy, alpha=0.1, color=color)
 
+            if row.get("splitters") is not None:
+                for splitter in row.splitters:
+                    ax.plot(*splitter.coords.xy, color="green", linewidth=0.6)
+
             x, y = row.simplified_geometry.boundary.coords.xy
             ax.scatter(x, y, color="red", s=7)
 
             ax.grid(True, color="lightgray")
 
             annotation = f"""
-                index: {ri}
+                iloc: {ri}
+                loc: {loc}
                 mrr_ratio: {row.simplified_geometry_mrr_ratio:.5f}
                 degree_sum: {row.simplified_geometry_degree_sum:.5f}
-                name: {save_path.split("processed")[-1]}
+                {save_path.split("processed")[-1]}
             """
 
             plt.axis([-2.0, 2.0, -2.0, 2.0])
 
             plt.gcf().text(
-                0.5,
+                0.45,
                 0.2,
                 annotation,
                 va="center",
@@ -695,7 +879,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 with zipfile.ZipFile(file_path, "r") as zip_ref:
                     zip_ref.extractall(self.LANDS_PATH)
 
-        for folder in os.listdir(self.LANDS_PATH):
+        for fi, folder in enumerate(os.listdir(self.LANDS_PATH)):
+            if folder != "seoul-gangbukgu":
+                continue
+
             folder_path = os.path.join(self.LANDS_PATH, folder)
             for shp_file in os.listdir(folder_path):
                 if not shp_file.endswith(".shp"):
@@ -704,22 +891,19 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 _lands_gdf = gpd.read_file(filename=os.path.join(folder_path, shp_file), encoding="CP949")
 
                 lands_gdf = self._get_initial_lands_gdf(_lands_gdf)
-                lands_gdf_regular = self._get_reglar_lands(lands_gdf)
+                # lands_gdf_regular = self._get_reglar_lands(lands_gdf)
                 lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
 
                 if self.is_debug_mode:
                     image_qa_path = os.path.join(self.IMG_QA_PATH, folder)
                     os.makedirs(image_qa_path, exist_ok=True)
 
-                    self._visualize_geometries_as_grid(
-                        lands_gdf=lands_gdf_regular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_REGULAR)
-                    )
+                    # self._visualize_geometries_as_grid(
+                    #     lands_gdf=lands_gdf_regular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_REGULAR)
+                    # )
                     self._visualize_geometries_as_grid(
                         lands_gdf=lands_gdf_irregular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_IRREGULAR)
                     )
-
-                break
-            break
 
         # os.makedirs(self.save_dir, exist_ok=True)
 
@@ -731,7 +915,6 @@ if __name__ == "__main__":
         number_to_split=2,
         simplification_degree_factor=1.0,
         segment_threshold_length=5.0,
-        includes_intersects_pts=True,
         is_debug_mode=True,
     )
 

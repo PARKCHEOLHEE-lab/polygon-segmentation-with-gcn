@@ -54,3 +54,5 @@ class LandUsage:
 
     USAGE_PARK_1 = "공원"
     USAGE_PARK_2 = "공원등"
+
+    USAGE_DITCH = "구거"
