@@ -105,7 +105,7 @@ class DataCreatorHelper:
         return (p2[1] - p1[1]) / (p2[0] - p1[0])
 
     @staticmethod
-    def compute_polyon_degrees(polygon: Polygon) -> List[float]:
+    def compute_polyon_degrees(polygon: Polygon, return_sum: bool = False) -> List[float]:
         """Compute polygon degrees
 
         Args:
@@ -132,6 +132,9 @@ class DataCreatorHelper:
             angle_degrees = np.degrees(angle_radians)
 
             polygon_degrees.append(angle_degrees)
+
+        if return_sum:
+            return sum(polygon_degrees)
 
         return polygon_degrees
 
@@ -587,9 +590,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         return splits_selected, triangulations_edges, splitters_selceted
 
     @commonutils.runtime_calculator
-    def _get_initial_lands_gdf(
-        self, original_lands_gdf: gpd.GeoDataFrame, use_multiprocessing: bool = True
-    ) -> gpd.GeoDataFrame:
+    def _get_initial_lands_gdf(self, original_lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """_summary_
 
         Args:
@@ -604,73 +605,91 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             & (~original_lands_gdf.iloc[:, 18].isna())
             & (original_lands_gdf.iloc[:, 11] != self.USAGE_ROAD_1)
             & (original_lands_gdf.iloc[:, 11] != self.USAGE_WATERWAY_1)
-            # & (original_lands_gdf.iloc[:, 11] != self.USAGE_PARK_1)
             & (original_lands_gdf.iloc[:, 18] != self.USAGE_ROAD_2)
             & (original_lands_gdf.iloc[:, 18] != self.USAGE_WATERWAY_2)
-            # & (original_lands_gdf.iloc[:, 18] != self.USAGE_PARK_2)
             & (original_lands_gdf.iloc[:, 18] != self.USAGE_DITCH)
         ]
 
-        if use_multiprocessing:
-            with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
-                lands_gdf["geometry"] = pool.apply_async(
-                    lambda row: Polygon(row.geometry.exterior.coords)
-                    if isinstance(row.geometry, Polygon)
-                    else Polygon(max(row.geometry.geoms, key=lambda g: g.area).exterior.coords),
-                    axis=1,
-                )
+        # 1. Remove holes and multipolygon
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["geometry"] = pool.map(self.get_polygon_created_by_exterior, lands_gdf.geometry.tolist())
 
-        else:
-            lands_gdf["geometry"] = lands_gdf.apply(
-                lambda row: Polygon(row.geometry.exterior.coords)
-                if isinstance(row.geometry, Polygon)
-                else Polygon(max(row.geometry.geoms, key=lambda g: g.area).exterior.coords),
-                axis=1,
+        # 2. Normalize geometry
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["normalized_geometry"] = pool.map(self.normalize_polygon, lands_gdf.geometry.tolist())
+
+        # 3. Erode and dilate to tidy
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["buffered_geometry"] = pool.starmap(
+                self.erode_and_dilate_polygon,
+                [(normalized_geometry, 0.15) for normalized_geometry in lands_gdf.normalized_geometry.tolist()],
             )
 
-            lands_gdf["normalized_geometry"] = lands_gdf.apply(lambda row: self.normalize_polygon(row.geometry), axis=1)
-
-            lands_gdf["buffered_geometry"] = lands_gdf.apply(
-                lambda row: self.erode_and_dilate_polygon(row.normalized_geometry, 0.15), axis=1
+        # 4. Dilate and erode to tidy
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["buffered_geometry"] = pool.starmap(
+                self.dilate_and_erode_polygon,
+                [(buffered_geometry, 0.45) for buffered_geometry in lands_gdf.buffered_geometry.tolist()],
             )
 
-            lands_gdf["buffered_geometry"] = lands_gdf.apply(
-                lambda row: self.dilate_and_erode_polygon(row.buffered_geometry, 0.45), axis=1
+        # 5. Remove empty geometries
+        lands_gdf = lands_gdf[
+            [not buffered_geometry.is_empty for buffered_geometry in lands_gdf.buffered_geometry.tolist()]
+        ]
+
+        # 6. Remove holes and multipolygon
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["buffered_geometry"] = pool.map(
+                self.get_polygon_created_by_exterior, lands_gdf.buffered_geometry.tolist()
             )
 
-            lands_gdf = lands_gdf[~lands_gdf.buffered_geometry.is_empty]
-
-            lands_gdf["buffered_geometry"] = lands_gdf.apply(
-                lambda row: Polygon(row.buffered_geometry.exterior.coords), axis=1
+        # 7. Simplify
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["simplified_geometry"] = pool.starmap(
+                self.simplify_polygon,
+                [
+                    (buffered_geometry, self.SIMPLIFICATION_DEGREE)
+                    for buffered_geometry in lands_gdf.buffered_geometry.tolist()
+                ],
             )
 
-            lands_gdf["simplified_geometry"] = lands_gdf.apply(
-                lambda row: self.simplify_polygon(row.buffered_geometry, self.SIMPLIFICATION_DEGREE), axis=1
+        # 8. Remove invalid geometries
+        lands_gdf = lands_gdf[
+            [simplified_geometry.is_valid for simplified_geometry in lands_gdf.simplified_geometry.tolist()]
+        ]
+
+        # 9. Create centerlines of geometries
+        lands_gdf["simplified_geometry_centerline"] = [
+            self.get_polygon_centerline(simplified_geometry, self.TOLERANCE_CENTERLINE, min_branch_length=0.45)
+            for simplified_geometry in lands_gdf.simplified_geometry.tolist()
+        ]
+
+        # 10. Remove empty centerlines
+        lands_gdf = lands_gdf[
+            [
+                not simplified_geometry_centerline.is_empty
+                for simplified_geometry_centerline in lands_gdf.simplified_geometry_centerline.tolist()
+            ]
+        ]
+
+        # 11. Compute MRR(Minimum Rotated Rectangle) ratio
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["simplified_geometry_mrr_ratio"] = pool.map(
+                self.compute_mrr_ratio, lands_gdf.simplified_geometry.tolist()
             )
 
-            lands_gdf = lands_gdf[lands_gdf.simplified_geometry.is_valid]
-
-            lands_gdf["simplified_geometry_centerline"] = lands_gdf.apply(
-                lambda row: self.get_polygon_centerline(
-                    row.simplified_geometry, self.TOLERANCE_CENTERLINE, min_branch_length=0.45
-                ),
-                axis=1,
+        # 12. Compute degree sum of geometries
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf["simplified_geometry_degree_sum"] = pool.starmap(
+                self.compute_polyon_degrees,
+                [(simplified_geometry, True) for simplified_geometry in lands_gdf.simplified_geometry.tolist()],
             )
 
-            lands_gdf = lands_gdf[~lands_gdf.simplified_geometry_centerline.is_empty]
-
-            lands_gdf["simplified_geometry_mrr_ratio"] = lands_gdf.apply(
-                lambda row: self.compute_mrr_ratio(row.simplified_geometry),
-                axis=1,
-            )
-
-            lands_gdf["simplified_geometry_degree_sum"] = lands_gdf.apply(
-                lambda row: sum(self.compute_polyon_degrees(row.simplified_geometry)), axis=1
-            )
-
-            lands_gdf["axes_count"] = lands_gdf.apply(
-                lambda row: max(0, len(row.simplified_geometry_centerline.coords) - 1), axis=1
-            )
+        # 13. Count axes of geometries from centerlines
+        lands_gdf["axes_count"] = [
+            max(0, len(simplified_geometry_centerline.coords) - 1)
+            for simplified_geometry_centerline in lands_gdf.simplified_geometry_centerline.tolist()
+        ]
 
         return lands_gdf
 
@@ -879,7 +898,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 with zipfile.ZipFile(file_path, "r") as zip_ref:
                     zip_ref.extractall(self.LANDS_PATH)
 
-        for fi, folder in enumerate(os.listdir(self.LANDS_PATH)):
+        for _, folder in enumerate(os.listdir(self.LANDS_PATH)):
             if folder != "seoul-gangbukgu":
                 continue
 
