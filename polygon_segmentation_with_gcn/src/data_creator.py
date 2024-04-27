@@ -35,6 +35,10 @@ from shapely.geometry import (
     JOIN_STYLE,
 )
 
+import warnings
+
+warnings.filterwarnings("ignore")
+
 
 class DataCreatorHelper:
     @staticmethod
@@ -477,6 +481,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         even_area_weight: float,
         ombr_ratio_weight: float,
         slope_similarity_weight: float,
+        return_splitters_only: bool = True,
     ):
         """_summary_
 
@@ -587,6 +592,9 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 splits_selected = splits
                 splitters_selceted = splitters
 
+        if return_splitters_only:
+            return splitters_selceted
+
         return splits_selected, triangulations_edges, splitters_selceted
 
     @commonutils.runtime_calculator
@@ -693,6 +701,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
         return lands_gdf
 
+    @commonutils.runtime_calculator
     def _get_reglar_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """_summary_
 
@@ -718,6 +727,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
         return lands_gdf_regular
 
+    @commonutils.runtime_calculator
     def _get_irregular_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """_summary_
 
@@ -748,17 +758,22 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             lambda row: self.insert_intersected_vertices(row.simplified_geometry), axis=1
         )
 
-        lands_gdf_irregular["splitters"] = lands_gdf_irregular.apply(
-            lambda row: self.segment_polygon(
-                polygon=row.simplified_geometry,
-                number_to_split=row.axes_count,
-                segment_threshold_length=self.SEGMENT_DIVIDE_BASELINE,
-                even_area_weight=self.EVEN_AREA_WEIGHT,
-                ombr_ratio_weight=self.OMBR_RATIO_WEIGHT,
-                slope_similarity_weight=self.SLOPE_SIMILARITY_WEIGHT,
-            )[-1],
-            axis=1,
-        )
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf_irregular["splitters"] = pool.starmap(
+                self.segment_polygon,
+                [
+                    (
+                        row.simplified_geometry,
+                        row.axes_count,
+                        self.SEGMENT_DIVIDE_BASELINE,
+                        self.EVEN_AREA_WEIGHT,
+                        self.OMBR_RATIO_WEIGHT,
+                        self.SLOPE_SIMILARITY_WEIGHT,
+                        True,
+                    )
+                    for _, row in lands_gdf_irregular.iterrows()
+                ],
+            )
 
         return lands_gdf_irregular
 
@@ -809,7 +824,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
             if row.get("splitters") is not None:
                 for splitter in row.splitters:
-                    ax.plot(*splitter.coords.xy, color="green", linewidth=0.6)
+                    ax.plot(*splitter.coords.xy, color="blue", linewidth=1.0)
 
             x, y = row.simplified_geometry.boundary.coords.xy
             ax.scatter(x, y, color="red", s=7)
