@@ -249,6 +249,7 @@ class DataCreatorHelper:
         intersects_pts_to_include = []
         polygon_segments = DataCreatorHelper.explode_polygon(polygon)
         polygon_vertices = MultiPoint(polygon.boundary.coords)
+        intersects_pts_to_include_buffered = MultiPoint([])
 
         for segment in polygon_segments:
             extended_segment = affinity.scale(segment, 100, 100)
@@ -263,9 +264,15 @@ class DataCreatorHelper:
                 ipts = [ipts]
 
             for ipt in ipts:
-                if not polygon_vertices.buffer(DataConfiguration.TOLERANCE).contains(ipt):
-                    if isinstance(ipt, Point):
-                        intersects_pts_to_include.append(ipt)
+                if (
+                    not polygon_vertices.buffer(DataConfiguration.TOLERANCE_LARGE).contains(ipt)
+                    and isinstance(ipt, Point)
+                    and not intersects_pts_to_include_buffered.contains(ipt)
+                ):
+                    intersects_pts_to_include.append(ipt)
+                    intersects_pts_to_include_buffered = MultiPoint(intersects_pts_to_include).buffer(
+                        DataConfiguration.TOLERANCE_LARGE
+                    )
 
         inserted_polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, intersects_pts_to_include)
 
@@ -754,11 +761,11 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             & (lands_gdf_irregular.apply(lambda row: 2 <= row.axes_count <= 3, axis=1))
         ]
 
-        lands_gdf_irregular["simplified_geometry"] = lands_gdf_irregular.apply(
-            lambda row: self.insert_intersected_vertices(row.simplified_geometry), axis=1
-        )
-
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf_irregular["simplified_geometry"] = pool.map(
+                self.insert_intersected_vertices, lands_gdf_irregular.simplified_geometry.tolist()
+            )
+
             lands_gdf_irregular["splitters"] = pool.starmap(
                 self.segment_polygon,
                 [
@@ -775,10 +782,23 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 ],
             )
 
+            lands_gdf_irregular = lands_gdf_irregular[
+                [row.splitters is not None for _, row in lands_gdf_irregular.iterrows()]
+            ]
+
+            lands_gdf_irregular["simplified_geometry"] = pool.starmap(
+                self.insert_vertices_into_polygon,
+                [
+                    (row.simplified_geometry, [Point(coord) for splitter in row.splitters for coord in splitter.coords])
+                    for _, row in lands_gdf_irregular.iterrows()
+                ],
+            )
+
         return lands_gdf_irregular
 
+    @commonutils.runtime_calculator
     def _visualize_geometries_as_grid(
-        self, lands_gdf: gpd.GeoDataFrame, save_path: str, max_size_to_visualize: int = 1000
+        self, lands_gdf: gpd.GeoDataFrame, save_path: str, max_size_to_visualize: int = 200
     ) -> None:
         """_summary_
 
@@ -914,9 +934,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                     zip_ref.extractall(self.LANDS_PATH)
 
         for _, folder in enumerate(os.listdir(self.LANDS_PATH)):
-            if folder != "seoul-gangbukgu":
-                continue
-
             folder_path = os.path.join(self.LANDS_PATH, folder)
             for shp_file in os.listdir(folder_path):
                 if not shp_file.endswith(".shp"):
@@ -925,19 +942,21 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 _lands_gdf = gpd.read_file(filename=os.path.join(folder_path, shp_file), encoding="CP949")
 
                 lands_gdf = self._get_initial_lands_gdf(_lands_gdf)
-                # lands_gdf_regular = self._get_reglar_lands(lands_gdf)
+                lands_gdf_regular = self._get_reglar_lands(lands_gdf)
                 lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
 
                 if self.is_debug_mode:
                     image_qa_path = os.path.join(self.IMG_QA_PATH, folder)
                     os.makedirs(image_qa_path, exist_ok=True)
 
-                    # self._visualize_geometries_as_grid(
-                    #     lands_gdf=lands_gdf_regular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_REGULAR)
-                    # )
+                    self._visualize_geometries_as_grid(
+                        lands_gdf=lands_gdf_regular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_REGULAR)
+                    )
                     self._visualize_geometries_as_grid(
                         lands_gdf=lands_gdf_irregular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_IRREGULAR)
                     )
+
+            break
 
         # os.makedirs(self.save_dir, exist_ok=True)
 
