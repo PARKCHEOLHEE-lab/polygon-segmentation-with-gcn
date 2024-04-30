@@ -402,6 +402,41 @@ class DataCreatorHelper:
 
         return Polygon(polygon.exterior.coords)
 
+    @staticmethod
+    def convert_polygon_to_graph(polygon: Polygon, linestrings: MultiLineString = None) -> dict[set[int]]:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            dict: _description_
+        """
+
+        exterior_coordinates = polygon.exterior.coords[:-1]
+
+        graph_dict = {}
+        for curr_ci in range(len(exterior_coordinates)):
+            next_ci = (curr_ci + 1) % len(exterior_coordinates)
+            prev_ci = (curr_ci - 1) % len(exterior_coordinates)
+
+            graph_dict[curr_ci] = set([next_ci, prev_ci])
+
+        if linestrings is not None:
+            for linestring in linestrings.geoms:
+                connected_indices = []
+                for linestring_coord in linestring.coords:
+                    for ci, coord in enumerate(exterior_coordinates):
+                        if np.isclose(Point(linestring_coord).distance(Point(coord)), 0):
+                            connected_indices.append(ci)
+                            break
+
+                if len(connected_indices) == 2:
+                    graph_dict[connected_indices[0]].add(connected_indices[1])
+                    graph_dict[connected_indices[1]].add(connected_indices[0])
+
+        return graph_dict
+
 
 class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.LandUsage):
     def __init__(
@@ -732,6 +767,12 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             )
         ]
 
+        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf_regular["graph_dict"] = pool.starmap(
+                self.convert_polygon_to_graph,
+                [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
+            )
+
         return lands_gdf_regular
 
     @commonutils.runtime_calculator
@@ -790,6 +831,14 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 self.insert_vertices_into_polygon,
                 [
                     (row.simplified_geometry, [Point(coord) for splitter in row.splitters for coord in splitter.coords])
+                    for _, row in lands_gdf_irregular.iterrows()
+                ],
+            )
+
+            lands_gdf_irregular["graph_dict"] = pool.starmap(
+                self.convert_polygon_to_graph,
+                [
+                    (row.simplified_geometry, MultiLineString(row.splitters))
                     for _, row in lands_gdf_irregular.iterrows()
                 ],
             )
