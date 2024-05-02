@@ -109,7 +109,7 @@ class DataCreatorHelper:
         return (p2[1] - p1[1]) / (p2[0] - p1[0])
 
     @staticmethod
-    def compute_polyon_degrees(polygon: Polygon, return_sum: bool = False) -> List[float]:
+    def compute_polyon_inner_degrees(polygon: Polygon, return_sum: bool = False) -> List[float]:
         """Compute polygon degrees
 
         Args:
@@ -135,6 +135,11 @@ class DataCreatorHelper:
             angle_radians = np.arccos(np.clip(cos_theta, -1.0, 1.0))
             angle_degrees = np.degrees(angle_radians)
 
+            # Check if `a` is concave or convex
+            cross_product = np.cross(ab, ac)
+            if cross_product < 0:
+                angle_degrees = 360 - angle_degrees
+
             polygon_degrees.append(angle_degrees)
 
         if return_sum:
@@ -158,7 +163,7 @@ class DataCreatorHelper:
         if np.allclose(exterior_coordinates[0], exterior_coordinates[-1]):
             exterior_coordinates = exterior_coordinates[:-1]
 
-        polygon_degrees = DataCreatorHelper.compute_polyon_degrees(polygon)
+        polygon_degrees = DataCreatorHelper.compute_polyon_inner_degrees(polygon)
 
         assert len(exterior_coordinates) == len(polygon_degrees), "Lengths condition is not satisfied."
 
@@ -437,6 +442,86 @@ class DataCreatorHelper:
 
         return graph_dict
 
+    @staticmethod
+    def compute_polygon_concavity_convexity(polygon: Polygon) -> List[int]:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            List[int]: _description_
+        """
+
+        return [int(degree <= 180) for degree in DataCreatorHelper.compute_polyon_inner_degrees(polygon)]
+
+    @staticmethod
+    def get_polygon_features(polygon: Polygon) -> np.ndarray:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            np.ndarray: _description_
+        """
+
+        polygon_degrees = DataCreatorHelper.compute_polyon_inner_degrees(polygon)
+        polygon_degrees_normalized = np.array([degree / 360 for degree in polygon_degrees]).reshape(-1, 1)
+
+        coordinates_x = []
+        coordinates_y = []
+        incoming_edge_lengths = []
+        outgoing_edge_lengths = []
+
+        polygon_edge_max_length = max(DataCreatorHelper.explode_polygon(polygon), key=lambda s: s.length).length
+
+        exterior_coordinates = polygon.exterior.coords[:-1]
+        for curr_ci, coords in enumerate(exterior_coordinates):
+            coordinates_x.append(coords[0])
+            coordinates_y.append(coords[1])
+
+            prev_ci = (curr_ci - 1) % len(exterior_coordinates)
+            next_ci = (curr_ci + 1) % len(exterior_coordinates)
+
+            incoming_edge_length = Point(exterior_coordinates[prev_ci]).distance(Point(exterior_coordinates[curr_ci]))
+            incoming_edge_length_normalized = incoming_edge_length / polygon_edge_max_length
+            incoming_edge_lengths.append(incoming_edge_length_normalized)
+
+            outgoing_edge_length = Point(exterior_coordinates[curr_ci]).distance(Point(exterior_coordinates[next_ci]))
+            outgoing_edge_length_normalized = outgoing_edge_length / polygon_edge_max_length
+            outgoing_edge_lengths.append(outgoing_edge_length_normalized)
+
+        coordinates_x = np.array([coordinates_x]).reshape(-1, 1)
+        coordinates_y = np.array([coordinates_y]).reshape(-1, 1)
+        incoming_edge_lengths = np.array([incoming_edge_lengths]).reshape(-1, 1)
+        outgoing_edge_lengths = np.array([outgoing_edge_lengths]).reshape(-1, 1)
+
+        concave_convex = DataCreatorHelper.compute_polygon_concavity_convexity(polygon)
+        concave_convex = np.array(concave_convex).reshape(-1, 1)
+
+        # global feature repeated
+        mrr_ratio = [DataCreatorHelper.compute_mrr_ratio(polygon)] * len(exterior_coordinates)
+        mrr_ratio = np.array(mrr_ratio).reshape(-1, 1)
+
+        polygon_features = np.hstack(
+            [
+                coordinates_x,
+                coordinates_y,
+                polygon_degrees_normalized,
+                incoming_edge_lengths,
+                outgoing_edge_lengths,
+                concave_convex,
+                mrr_ratio,
+            ]
+        )
+
+        assert len(polygon_features) == len(polygon.exterior.coords[:-1]) and polygon_features.shape[0] == len(
+            exterior_coordinates
+        ), "`polygon_features` has been created with an invalid shape."
+
+        return polygon_features
+
 
 class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.LandUsage):
     def __init__(
@@ -582,7 +667,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                         splitter_indices.append(ssi)
                         splitter_indices.append(ssi + 1)
 
-                degrees = self.compute_polyon_degrees(split)
+                degrees = self.compute_polyon_inner_degrees(split)
                 degrees += [degrees[0]]
 
                 if (np.array(degrees)[splitter_indices] < 20).sum():
@@ -731,7 +816,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         # 12. Compute degree sum of geometries
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
             lands_gdf["simplified_geometry_degree_sum"] = pool.starmap(
-                self.compute_polyon_degrees,
+                self.compute_polyon_inner_degrees,
                 [(simplified_geometry, True) for simplified_geometry in lands_gdf.simplified_geometry.tolist()],
             )
 
