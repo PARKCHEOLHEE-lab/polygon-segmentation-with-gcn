@@ -322,6 +322,22 @@ class DataCreatorHelper:
         return polygon_area / mrr_area
 
     @staticmethod
+    def compute_mrr_aspect_ratio(polygon: Polygon) -> float:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            float: _description_
+        """
+
+        mrr_segments = DataCreatorHelper.explode_polygon(polygon.minimum_rotated_rectangle)
+        shortest_segment, _, longest_segment, _ = sorted(mrr_segments, key=lambda s: s.length)
+
+        return shortest_segment.length / longest_segment.length
+
+    @staticmethod
     def erode_and_dilate_polygon(polygon: Polygon, buffer_distance: float) -> Polygon:
         """_summary_
 
@@ -500,9 +516,12 @@ class DataCreatorHelper:
         concave_convex = DataCreatorHelper.compute_polygon_concavity_convexity(polygon)
         concave_convex = np.array(concave_convex).reshape(-1, 1)
 
-        # global feature repeated
+        # global features repeated
         mrr_ratio = [DataCreatorHelper.compute_mrr_ratio(polygon)] * len(exterior_coordinates)
         mrr_ratio = np.array(mrr_ratio).reshape(-1, 1)
+
+        mrr_aspect_ratio = [DataCreatorHelper.compute_mrr_aspect_ratio(polygon)] * len(exterior_coordinates)
+        mrr_aspect_ratio = np.array(mrr_aspect_ratio).reshape(-1, 1)
 
         polygon_features = np.hstack(
             [
@@ -513,6 +532,7 @@ class DataCreatorHelper:
                 outgoing_edge_lengths,
                 concave_convex,
                 mrr_ratio,
+                mrr_aspect_ratio,
             ]
         )
 
@@ -1078,6 +1098,9 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 lands_gdf = self._get_initial_lands_gdf(_lands_gdf)
                 lands_gdf_regular = self._get_reglar_lands(lands_gdf)
                 lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
+
+                # for _, row in lands_gdf_irregular.iterrows():
+                #     self.get_polygon_features(row.simplified_geometry)
 
                 if self.is_debug_mode:
                     image_qa_path = os.path.join(self.IMG_QA_PATH, folder)
