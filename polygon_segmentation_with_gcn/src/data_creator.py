@@ -458,6 +458,30 @@ class DataCreatorHelper:
         return edge_index
 
     @staticmethod
+    def get_polygon_edge_weight(polygon: Polygon, linestrings: MultiLineString = None) -> np.ndarray:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+
+        Returns:
+            np.ndarray: _description_
+        """
+
+        polygon_segments = DataCreatorHelper.explode_polygon(polygon)
+        edge_weight = np.array([segment.length for segment in polygon_segments])
+
+        assert edge_weight.shape[0] == len(polygon_segments)
+
+        if isinstance(linestrings, MultiLineString):
+            for linestring in linestrings.geoms:
+                edge_weight = np.append(edge_weight, linestring.length)
+
+            assert edge_weight.shape[0] == len(polygon_segments) + len(linestrings.geoms)
+
+        return edge_weight
+
+    @staticmethod
     def compute_polygon_concavity_convexity(polygon: Polygon) -> List[int]:
         """_summary_
 
@@ -882,6 +906,11 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
             )
 
+            lands_gdf_regular["edge_weight"] = pool.starmap(
+                self.get_polygon_edge_weight,
+                [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
+            )
+
             lands_gdf_regular["features"] = pool.map(
                 self.get_polygon_features, lands_gdf_regular.simplified_geometry.tolist()
             )
@@ -950,6 +979,14 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
             lands_gdf_irregular["edge_index"] = pool.starmap(
                 self.get_polygon_edge_index,
+                [
+                    (row.simplified_geometry, MultiLineString(row.splitters))
+                    for _, row in lands_gdf_irregular.iterrows()
+                ],
+            )
+
+            lands_gdf_irregular["edge_weight"] = pool.starmap(
+                self.get_polygon_edge_weight,
                 [
                     (row.simplified_geometry, MultiLineString(row.splitters))
                     for _, row in lands_gdf_irregular.iterrows()
