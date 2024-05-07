@@ -1167,7 +1167,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 if __name__ == "__main__":
     data_creator = DataCreator(
         shp_dir=DataConfiguration.SHP_PATH,
-        save_dir=DataConfiguration.SAVE_PATH,
+        save_dir=DataConfiguration.SAVE_RAW_PATH,
         number_to_split=2,
         simplification_degree_factor=1.0,
         segment_threshold_length=5.0,

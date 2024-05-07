@@ -17,11 +17,12 @@ class DataConfiguration:
 
     SHP_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/shp"))
     SAVE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/processed"))
+    SAVE_RAW_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/raw"))
 
     LANDS_ZIP_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands_zip"))
     LANDS_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands"))
 
-    IMG_QA_PATH = os.path.abspath(os.path.join(SAVE_PATH, "qa"))
+    IMG_QA_PATH = os.path.abspath(os.path.join(SAVE_RAW_PATH, "qa"))
     IMG_QA_NAME_REGULAR = "lands_gdf_regular.png"
     IMG_QA_NAME_IRREGULAR = "lands_gdf_irregular.png"
 
