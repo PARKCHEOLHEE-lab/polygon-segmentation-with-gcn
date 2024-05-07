@@ -536,9 +536,14 @@ class DataCreatorHelper:
             ]
         )
 
-        assert len(polygon_features) == len(polygon.exterior.coords[:-1]) and polygon_features.shape[0] == len(
-            exterior_coordinates
-        ), "`polygon_features` has been created with an invalid shape."
+        valid_polygon_features_condition = all(
+            [
+                len(polygon_features) == len(polygon.exterior.coords[:-1]),
+                polygon_features.shape[0] == len(exterior_coordinates),
+            ]
+        )
+
+        assert valid_polygon_features_condition, "`polygon_features` has been created with an invalid shape."
 
         return polygon_features
 
