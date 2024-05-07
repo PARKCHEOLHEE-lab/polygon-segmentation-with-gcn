@@ -883,6 +883,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
             )
 
+            lands_gdf_regular["features"] = pool.map(
+                self.get_polygon_features, lands_gdf_regular.simplified_geometry.tolist()
+            )
+
         return lands_gdf_regular
 
     @commonutils.runtime_calculator
@@ -951,6 +955,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                     (row.simplified_geometry, MultiLineString(row.splitters))
                     for _, row in lands_gdf_irregular.iterrows()
                 ],
+            )
+
+            lands_gdf_irregular["features"] = pool.map(
+                self.get_polygon_features, lands_gdf_irregular.simplified_geometry.tolist()
             )
 
         return lands_gdf_irregular
@@ -1103,9 +1111,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 lands_gdf = self._get_initial_lands_gdf(_lands_gdf)
                 lands_gdf_regular = self._get_reglar_lands(lands_gdf)
                 lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
-
-                # for _, row in lands_gdf_irregular.iterrows():
-                #     self.get_polygon_features(row.simplified_geometry)
 
                 if self.is_debug_mode:
                     image_qa_path = os.path.join(self.IMG_QA_PATH, folder)
