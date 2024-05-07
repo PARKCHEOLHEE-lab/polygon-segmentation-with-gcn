@@ -424,26 +424,26 @@ class DataCreatorHelper:
         return Polygon(polygon.exterior.coords)
 
     @staticmethod
-    def convert_polygon_to_graph(polygon: Polygon, linestrings: MultiLineString = None) -> dict[set[int]]:
+    def get_polygon_edge_index(polygon: Polygon, linestrings: MultiLineString = None) -> np.ndarray:
         """_summary_
 
         Args:
             polygon (Polygon): _description_
+            linestrings (MultiLineString, optional): _description_. Defaults to None.
 
         Returns:
-            dict: _description_
+            np.ndarray: _description_
         """
 
         exterior_coordinates = polygon.exterior.coords[:-1]
 
-        graph_dict = {}
+        edge_index = np.array([[], []])
         for curr_ci in range(len(exterior_coordinates)):
             next_ci = (curr_ci + 1) % len(exterior_coordinates)
-            prev_ci = (curr_ci - 1) % len(exterior_coordinates)
 
-            graph_dict[curr_ci] = set([next_ci, prev_ci])
+            edge_index = np.hstack([edge_index, np.array([curr_ci, next_ci]).reshape(-1, 1)]).astype(int)
 
-        if linestrings is not None:
+        if isinstance(linestrings, MultiLineString):
             for linestring in linestrings.geoms:
                 connected_indices = []
                 for linestring_coord in linestring.coords:
@@ -453,10 +453,9 @@ class DataCreatorHelper:
                             break
 
                 if len(connected_indices) == 2:
-                    graph_dict[connected_indices[0]].add(connected_indices[1])
-                    graph_dict[connected_indices[1]].add(connected_indices[0])
+                    edge_index = np.hstack([edge_index, np.array([connected_indices]).reshape(-1, 1)])
 
-        return graph_dict
+        return edge_index
 
     @staticmethod
     def compute_polygon_concavity_convexity(polygon: Polygon) -> List[int]:
@@ -878,8 +877,8 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         ]
 
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-            lands_gdf_regular["graph_dict"] = pool.starmap(
-                self.convert_polygon_to_graph,
+            lands_gdf_regular["edge_index"] = pool.starmap(
+                self.get_polygon_edge_index,
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
             )
 
@@ -949,8 +948,8 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 ],
             )
 
-            lands_gdf_irregular["graph_dict"] = pool.starmap(
-                self.convert_polygon_to_graph,
+            lands_gdf_irregular["edge_index"] = pool.starmap(
+                self.get_polygon_edge_index,
                 [
                     (row.simplified_geometry, MultiLineString(row.splitters))
                     for _, row in lands_gdf_irregular.iterrows()
