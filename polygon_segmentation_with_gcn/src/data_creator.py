@@ -873,7 +873,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         return lands_gdf
 
     @commonutils.runtime_calculator
-    def _get_reglar_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    def _get_reglar_lands(self, lands_gdf: gpd.GeoDataFrame, folder: str) -> gpd.GeoDataFrame:
         """_summary_
 
         Args:
@@ -913,10 +913,13 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 self.get_polygon_features, lands_gdf_regular.simplified_geometry.tolist()
             )
 
+        name = folder + "-" + "regular"
+        lands_gdf_regular["name"] = [name] * lands_gdf_regular.shape[0]
+
         return lands_gdf_regular
 
     @commonutils.runtime_calculator
-    def _get_irregular_lands(self, lands_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    def _get_irregular_lands(self, lands_gdf: gpd.GeoDataFrame, folder: str) -> gpd.GeoDataFrame:
         """_summary_
 
         Args:
@@ -997,6 +1000,9 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 self.get_polygon_features, lands_gdf_irregular.simplified_geometry.tolist()
             )
 
+        name = folder + "-" + "irregular"
+        lands_gdf_irregular["name"] = [name] * lands_gdf_irregular.shape[0]
+
         return lands_gdf_irregular
 
     @commonutils.runtime_calculator
@@ -1022,7 +1028,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             return image
 
         dpi = 100
-        figsize = (4, 4)
+        figsize = (5, 5)
         col_num = 4
         row_num = int(np.ceil(min(lands_gdf.simplified_geometry.shape[0], max_size_to_visualize) / col_num))
         img_size = figsize[0] * dpi
@@ -1052,6 +1058,9 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             x, y = row.simplified_geometry.boundary.coords.xy
             ax.scatter(x, y, color="red", s=7)
 
+            for index, (xi, yi) in enumerate(list(zip(x, y))[:-1]):
+                ax.annotate(str(index), (xi, yi), textcoords="offset points", xytext=(0, 5), ha="center", fontsize=5.5)
+
             ax.grid(True, color="lightgray")
 
             annotation = f"""
@@ -1059,7 +1068,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 loc: {loc}
                 mrr_ratio: {row.simplified_geometry_mrr_ratio:.5f}
                 degree_sum: {row.simplified_geometry_degree_sum:.5f}
-                {save_path.split("processed")[-1]}
+                {save_path.split("raw")[-1]}
             """
 
             plt.axis([-2.0, 2.0, -2.0, 2.0])
@@ -1151,8 +1160,8 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 _lands_gdf = gpd.read_file(filename=os.path.join(folder_path, shp_file), encoding="CP949")
 
                 lands_gdf = self._get_initial_lands_gdf(_lands_gdf)
-                lands_gdf_regular = self._get_reglar_lands(lands_gdf)
-                lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
+                lands_gdf_regular = self._get_reglar_lands(lands_gdf, folder)
+                lands_gdf_irregular = self._get_irregular_lands(lands_gdf, folder)
 
                 lands_gdf_regular.to_pickle(os.path.join(raw_data_path_to_save, self.LANDS_GDF_REGULAR_PKL))
                 lands_gdf_irregular.to_pickle(os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PKL))
@@ -1165,6 +1174,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                     self._visualize_geometries_as_grid(
                         lands_gdf=lands_gdf_irregular,
                         save_path=os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PNG),
+                        max_size_to_visualize=500,
                     )
 
             clear_output(wait=True)
