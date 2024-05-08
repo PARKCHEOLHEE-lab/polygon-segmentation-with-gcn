@@ -19,7 +19,8 @@ import geopandas as gpd
 import zipfile36 as zipfile
 import matplotlib.pyplot as plt
 
-
+from IPython.display import clear_output
+from tqdm import tqdm
 from PIL import Image
 from typing import List, Tuple
 from shapely import ops, affinity
@@ -1137,7 +1138,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
         os.makedirs(self.save_dir, exist_ok=True)
 
-        for _, folder in enumerate(os.listdir(self.LANDS_PATH)):
+        for _, folder in enumerate(tqdm(os.listdir(self.LANDS_PATH))):
             folder_path = os.path.join(self.LANDS_PATH, folder)
 
             raw_data_path_to_save = os.path.join(self.save_dir, folder)
@@ -1165,3 +1166,5 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                         lands_gdf=lands_gdf_irregular,
                         save_path=os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PNG),
                     )
+
+            clear_output(wait=True)
