@@ -22,9 +22,14 @@ class DataConfiguration:
     LANDS_ZIP_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands_zip"))
     LANDS_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands"))
 
-    IMG_QA_PATH = os.path.abspath(os.path.join(SAVE_RAW_PATH, "qa"))
-    IMG_QA_NAME_REGULAR = "lands_gdf_regular.png"
-    IMG_QA_NAME_IRREGULAR = "lands_gdf_irregular.png"
+    LANDS_GDF_REGULAR_NAME = "lands_gdf_regular"
+    LANDS_GDF_IRREGULAR_NAME = "lands_gdf_irregular"
+
+    LANDS_GDF_REGULAR_PKL = f"{LANDS_GDF_REGULAR_NAME}.pkl"
+    LANDS_GDF_IRREGULAR_PKL = f"{LANDS_GDF_IRREGULAR_NAME}.pkl"
+
+    LANDS_GDF_REGULAR_PNG = f"{LANDS_GDF_REGULAR_NAME}.png"
+    LANDS_GDF_IRREGULAR_PNG = f"{LANDS_GDF_IRREGULAR_NAME}.png"
 
     LAND_AREA_THRESHOLD = 100
 

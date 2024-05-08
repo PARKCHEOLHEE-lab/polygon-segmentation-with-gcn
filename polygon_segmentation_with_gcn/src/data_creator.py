@@ -8,6 +8,7 @@ if os.path.abspath(os.path.join(__file__, "../../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(__file__, "../../../")))
 
 import io
+import copy
 import shapely
 import traceback
 import pygeoops
@@ -576,23 +577,19 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         self,
         shp_dir: str,
         save_dir: str,
-        number_to_split: int,
-        simplification_degree_factor: float = None,
-        segment_threshold_length: float = None,
         even_area_weight: float = DataConfiguration.EVEN_AREA_WEIGHT,
         ombr_ratio_weight: float = DataConfiguration.OMBR_RATIO_WEIGHT,
         slope_similarity_weight: float = DataConfiguration.SLOPE_SIMILARITY_WEIGHT,
         is_debug_mode: bool = False,
+        save_qa_image: bool = False,
     ):
         self.shp_dir = shp_dir
         self.save_dir = save_dir
-        self.number_to_split = number_to_split
-        self.simplification_degree_factor = simplification_degree_factor
-        self.segment_threshold_length = segment_threshold_length
         self.even_area_weight = even_area_weight
         self.ombr_ratio_weight = ombr_ratio_weight
         self.slope_similarity_weight = slope_similarity_weight
         self.is_debug_mode = is_debug_mode
+        self.save_qa_image = save_qa_image
 
         if self.is_debug_mode:
             commonutils.add_debugvisualizer(globals())
@@ -606,7 +603,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
         Args:
             polygon (Polygon): _description_
-            simplification_degree_factor (float, optional): _description_. Defaults to None.
             segment_threshold_length (float, optional): _description_. Defaults to None.
 
         Returns:
@@ -663,7 +659,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         Args:
             polygon (Polygon): _description_
             number_to_split (int): _description_
-            simplification_degree_factor (float): _description_
             segment_threshold_length (float): _description_
             even_area_weight (float): _description_
             ombr_ratio_weight (float): _description_
@@ -906,6 +901,8 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
             )
 
+            lands_gdf_regular["edge_label_index"] = copy.deepcopy(lands_gdf_regular.edge_index.tolist())
+
             lands_gdf_regular["edge_weight"] = pool.starmap(
                 self.get_polygon_edge_weight,
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
@@ -979,6 +976,11 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
             lands_gdf_irregular["edge_index"] = pool.starmap(
                 self.get_polygon_edge_index,
+                [(row.simplified_geometry, None) for _, row in lands_gdf_irregular.iterrows()],
+            )
+
+            lands_gdf_irregular["edge_label_index"] = pool.starmap(
+                self.get_polygon_edge_index,
                 [
                     (row.simplified_geometry, MultiLineString(row.splitters))
                     for _, row in lands_gdf_irregular.iterrows()
@@ -987,10 +989,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
 
             lands_gdf_irregular["edge_weight"] = pool.starmap(
                 self.get_polygon_edge_weight,
-                [
-                    (row.simplified_geometry, MultiLineString(row.splitters))
-                    for _, row in lands_gdf_irregular.iterrows()
-                ],
+                [(row.simplified_geometry, None) for _, row in lands_gdf_irregular.iterrows()],
             )
 
             lands_gdf_irregular["features"] = pool.map(
@@ -1136,8 +1135,14 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 with zipfile.ZipFile(file_path, "r") as zip_ref:
                     zip_ref.extractall(self.LANDS_PATH)
 
+        os.makedirs(self.save_dir, exist_ok=True)
+
         for _, folder in enumerate(os.listdir(self.LANDS_PATH)):
             folder_path = os.path.join(self.LANDS_PATH, folder)
+
+            raw_data_path_to_save = os.path.join(self.save_dir, folder)
+            os.makedirs(raw_data_path_to_save, exist_ok=True)
+
             for shp_file in os.listdir(folder_path):
                 if not shp_file.endswith(".shp"):
                     continue
@@ -1148,30 +1153,15 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 lands_gdf_regular = self._get_reglar_lands(lands_gdf)
                 lands_gdf_irregular = self._get_irregular_lands(lands_gdf)
 
-                if self.is_debug_mode:
-                    image_qa_path = os.path.join(self.IMG_QA_PATH, folder)
-                    os.makedirs(image_qa_path, exist_ok=True)
+                lands_gdf_regular.to_pickle(os.path.join(raw_data_path_to_save, self.LANDS_GDF_REGULAR_PKL))
+                lands_gdf_irregular.to_pickle(os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PKL))
 
+                if self.save_qa_image:
                     self._visualize_geometries_as_grid(
-                        lands_gdf=lands_gdf_regular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_REGULAR)
+                        lands_gdf=lands_gdf_regular,
+                        save_path=os.path.join(raw_data_path_to_save, self.LANDS_GDF_REGULAR_PNG),
                     )
                     self._visualize_geometries_as_grid(
-                        lands_gdf=lands_gdf_irregular, save_path=os.path.join(image_qa_path, self.IMG_QA_NAME_IRREGULAR)
+                        lands_gdf=lands_gdf_irregular,
+                        save_path=os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PNG),
                     )
-
-            break
-
-        # os.makedirs(self.save_dir, exist_ok=True)
-
-
-if __name__ == "__main__":
-    data_creator = DataCreator(
-        shp_dir=DataConfiguration.SHP_PATH,
-        save_dir=DataConfiguration.SAVE_RAW_PATH,
-        number_to_split=2,
-        simplification_degree_factor=1.0,
-        segment_threshold_length=5.0,
-        is_debug_mode=True,
-    )
-
-    data_creator.create()
