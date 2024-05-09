@@ -604,6 +604,27 @@ class DataCreatorHelper:
 
         return polygon_features
 
+    @staticmethod
+    def connect_polygon_segments_by_indices(polygon: Polygon, edge_indices: np.ndarray) -> List[LineString]:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+            edge_indices (np.ndarray): _description_
+
+        Returns:
+            List[LineString]: _description_
+        """
+
+        exterior_coordinates = polygon.exterior.coords[:-1]
+
+        connected_segments = []
+        for i in range(edge_indices.shape[1]):
+            i1, i2 = edge_indices[:, i]
+            connected_segments.append(LineString([exterior_coordinates[i1], exterior_coordinates[i2]]))
+
+        return connected_segments
+
 
 class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.LandUsage):
     def __init__(
