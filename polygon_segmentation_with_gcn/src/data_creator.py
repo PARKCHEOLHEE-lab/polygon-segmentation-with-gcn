@@ -286,6 +286,34 @@ class DataCreatorHelper:
         return inserted_polygon
 
     @staticmethod
+    def divide_polygon_segments_by_length(polygon: Polygon, segment_threshold_length: float) -> Polygon:
+        """_summary_
+
+        Args:
+            polygon (Polygon): _description_
+            segment_threshold_length (float): _description_
+
+        Returns:
+            Polygon: _description_
+        """
+
+        polygon_segments = DataCreatorHelper.explode_polygon(polygon)
+
+        vertices_to_insert = []
+        for segment in polygon_segments:
+            if segment.length > segment_threshold_length:
+                divided_points = DataCreatorHelper.divide_linestring(
+                    linestring=segment,
+                    count_to_divide=np.ceil(segment.length / segment_threshold_length).astype(int),
+                )[1:-1]
+
+                vertices_to_insert.extend(divided_points)
+
+        divided_polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, vertices_to_insert)
+
+        return divided_polygon
+
+    @staticmethod
     def normalize_polygon(polygon: Polygon) -> Polygon:
         """Centralize a given polygon to (0, 0) and normalize it to (-1, 1).
 
@@ -542,11 +570,14 @@ class DataCreatorHelper:
         concave_convex = np.array(concave_convex).reshape(-1, 1)
 
         # global features repeated
-        mrr_ratio = [DataCreatorHelper.compute_mrr_ratio(polygon)] * len(exterior_coordinates)
-        mrr_ratio = np.array(mrr_ratio).reshape(-1, 1)
+        mrr_ratio_repeated = [DataCreatorHelper.compute_mrr_ratio(polygon)] * len(exterior_coordinates)
+        mrr_ratio_repeated = np.array(mrr_ratio_repeated).reshape(-1, 1)
 
-        mrr_aspect_ratio = [DataCreatorHelper.compute_mrr_aspect_ratio(polygon)] * len(exterior_coordinates)
-        mrr_aspect_ratio = np.array(mrr_aspect_ratio).reshape(-1, 1)
+        mrr_aspect_ratio_repeated = [DataCreatorHelper.compute_mrr_aspect_ratio(polygon)] * len(exterior_coordinates)
+        mrr_aspect_ratio_repeated = np.array(mrr_aspect_ratio_repeated).reshape(-1, 1)
+
+        area_repeated = [polygon.area] * len(exterior_coordinates)
+        area_repeated = np.array(area_repeated).reshape(-1, 1)
 
         polygon_features = np.hstack(
             [
@@ -556,8 +587,9 @@ class DataCreatorHelper:
                 incoming_edge_lengths,
                 outgoing_edge_lengths,
                 concave_convex,
-                mrr_ratio,
-                mrr_aspect_ratio,
+                mrr_ratio_repeated,
+                mrr_aspect_ratio_repeated,
+                area_repeated,
             ]
         )
 
@@ -598,7 +630,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
     def triangulate_polygon(
         self,
         polygon: Polygon,
-        segment_threshold_length: float,
+        segment_threshold_length: float = None,
     ) -> Tuple[List[Polygon], List[LineString]]:
         """_summary_
 
@@ -611,19 +643,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         """
 
         if isinstance(segment_threshold_length, float):
-            polygon_segments = DataCreatorHelper.explode_polygon(polygon)
-
-            vertices_to_insert = []
-            for segment in polygon_segments:
-                if segment.length > segment_threshold_length:
-                    divided_points = DataCreatorHelper.divide_linestring(
-                        linestring=segment,
-                        count_to_divide=np.ceil(segment.length / segment_threshold_length).astype(int),
-                    )[1:-1]
-
-                    vertices_to_insert.extend(divided_points)
-
-            polygon = DataCreatorHelper.insert_vertices_into_polygon(polygon, vertices_to_insert)
+            polygon = self.divide_polygon_segments_by_length(polygon, segment_threshold_length)
 
         buffered_polygon = polygon.buffer(self.TOLERANCE, join_style=JOIN_STYLE.mitre)
 
@@ -897,12 +917,22 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         ]
 
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+            lands_gdf_regular["simplified_geometry"] = pool.starmap(
+                self.divide_polygon_segments_by_length,
+                [
+                    (row.simplified_geometry, self.SEGMENT_DIVIDE_BASELINE_TO_POLYGON)
+                    for _, row in lands_gdf_regular.iterrows()
+                ],
+            )
+
             lands_gdf_regular["edge_index"] = pool.starmap(
                 self.get_polygon_edge_index,
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
             )
 
             lands_gdf_regular["edge_label_index"] = copy.deepcopy(lands_gdf_regular.edge_index.tolist())
+
+            lands_gdf_regular["edge_label_index_only"] = [np.array([[None], [None]])] * lands_gdf_regular.shape[0]
 
             lands_gdf_regular["edge_weight"] = pool.starmap(
                 self.get_polygon_edge_weight,
@@ -950,13 +980,21 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 self.insert_intersected_vertices, lands_gdf_irregular.simplified_geometry.tolist()
             )
 
+            lands_gdf_irregular["simplified_geometry"] = pool.starmap(
+                self.divide_polygon_segments_by_length,
+                [
+                    (row.simplified_geometry, self.SEGMENT_DIVIDE_BASELINE_TO_POLYGON)
+                    for _, row in lands_gdf_irregular.iterrows()
+                ],
+            )
+
             lands_gdf_irregular["splitters"] = pool.starmap(
                 self.segment_polygon,
                 [
                     (
                         row.simplified_geometry,
                         row.axes_count,
-                        self.SEGMENT_DIVIDE_BASELINE,
+                        self.SEGMENT_DIVIDE_BASELINE_TO_TRIANGULATE,
                         self.EVEN_AREA_WEIGHT,
                         self.OMBR_RATIO_WEIGHT,
                         self.SLOPE_SIMILARITY_WEIGHT,
@@ -990,6 +1028,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                     for _, row in lands_gdf_irregular.iterrows()
                 ],
             )
+
+            lands_gdf_irregular["edge_label_index_only"] = [
+                row.edge_label_index[:, -row.axes_count + 1 :] for _, row in lands_gdf_irregular.iterrows()
+            ]
 
             lands_gdf_irregular["edge_weight"] = pool.starmap(
                 self.get_polygon_edge_weight,
@@ -1059,15 +1101,17 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             ax.scatter(x, y, color="red", s=7)
 
             for index, (xi, yi) in enumerate(list(zip(x, y))[:-1]):
-                ax.annotate(str(index), (xi, yi), textcoords="offset points", xytext=(0, 5), ha="center", fontsize=5.5)
+                ax.annotate(str(index), (xi, yi), textcoords="offset points", xytext=(0, 5), ha="center", fontsize=5.2)
 
             ax.grid(True, color="lightgray")
+
+            edge_label_index_only = row.edge_label_index_only.tolist()
 
             annotation = f"""
                 iloc: {ri}
                 loc: {loc}
-                mrr_ratio: {row.simplified_geometry_mrr_ratio:.5f}
-                degree_sum: {row.simplified_geometry_degree_sum:.5f}
+                edge_label_index_only_0: {edge_label_index_only[0]}
+                edge_label_index_only_1: {edge_label_index_only[1]}
                 {save_path.split("raw")[-1]}
             """
 
