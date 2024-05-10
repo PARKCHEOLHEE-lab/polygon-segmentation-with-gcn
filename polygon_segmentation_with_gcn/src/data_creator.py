@@ -1080,7 +1080,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
         return lands_gdf_irregular
 
     @commonutils.runtime_calculator
-    def _visualize_geometries_as_grid(
+    def visualize_gdf_geometries_as_grid(
         self, lands_gdf: gpd.GeoDataFrame, save_path: str, max_size_to_visualize: int = 200
     ) -> None:
         """_summary_
@@ -1243,11 +1243,11 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 lands_gdf_irregular.to_pickle(os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PKL))
 
                 if self.save_qa_image:
-                    self._visualize_geometries_as_grid(
+                    self.visualize_gdf_geometries_as_grid(
                         lands_gdf=lands_gdf_regular,
                         save_path=os.path.join(raw_data_path_to_save, self.LANDS_GDF_REGULAR_PNG),
                     )
-                    self._visualize_geometries_as_grid(
+                    self.visualize_gdf_geometries_as_grid(
                         lands_gdf=lands_gdf_irregular,
                         save_path=os.path.join(raw_data_path_to_save, self.LANDS_GDF_IRREGULAR_PNG),
                         max_size_to_visualize=500,
