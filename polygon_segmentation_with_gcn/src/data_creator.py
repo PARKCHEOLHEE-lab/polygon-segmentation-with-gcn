@@ -333,6 +333,9 @@ class DataCreatorHelper:
 
         normalized_coordinates = centralized_coordinates / max_norms
 
+        assert np.isclose(np.linalg.norm(normalized_coordinates, axis=1).max(), 1.0)
+        assert np.all(np.linalg.norm(normalized_coordinates, axis=1) < 1.01)
+
         return Polygon(normalized_coordinates)
 
     @staticmethod
@@ -946,6 +949,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 ],
             )
 
+            lands_gdf_regular["simplified_geometry"] = pool.map(
+                self.normalize_polygon, lands_gdf_regular.simplified_geometry.tolist()
+            )
+
             lands_gdf_regular["edge_index"] = pool.starmap(
                 self.get_polygon_edge_index,
                 [(row.simplified_geometry, None) for _, row in lands_gdf_regular.iterrows()],
@@ -1007,6 +1014,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                     (row.simplified_geometry, self.SEGMENT_DIVIDE_BASELINE_TO_POLYGON)
                     for _, row in lands_gdf_irregular.iterrows()
                 ],
+            )
+
+            lands_gdf_irregular["simplified_geometry"] = pool.map(
+                self.normalize_polygon, lands_gdf_irregular.simplified_geometry.tolist()
             )
 
             lands_gdf_irregular["splitters"] = pool.starmap(
