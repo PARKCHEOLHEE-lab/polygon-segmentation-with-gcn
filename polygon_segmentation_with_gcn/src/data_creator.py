@@ -1129,6 +1129,14 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 for splitter in row.splitters:
                     ax.plot(*splitter.coords.xy, color="blue", linewidth=1.0)
 
+            if row.get("refined_edge_label_index_only") is not None:
+                refined_splitters = self.connect_polygon_segments_by_indices(
+                    row.simplified_geometry, row.refined_edge_label_index_only
+                )
+
+                for refined_splitter in refined_splitters:
+                    ax.plot(*refined_splitter.coords.xy, color="green", linewidth=1.0)
+
             x, y = row.simplified_geometry.boundary.coords.xy
             ax.scatter(x, y, color="red", s=7)
 
@@ -1140,11 +1148,10 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             edge_label_index_only = row.edge_label_index_only.tolist()
 
             annotation = f"""
-                iloc: {ri}
                 loc: {loc}
                 edge_label_index_only_0: {edge_label_index_only[0]}
                 edge_label_index_only_1: {edge_label_index_only[1]}
-                {save_path.split("raw")[-1]}
+                {os.path.join(*save_path.split("/")[-2:])}
             """
 
             plt.axis([-2.0, 2.0, -2.0, 2.0])
