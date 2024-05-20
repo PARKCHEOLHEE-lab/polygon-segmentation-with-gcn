@@ -20,6 +20,8 @@ class DataConfiguration:
     SAVE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/processed"))
     SAVE_RAW_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/raw"))
 
+    MERGED_SAVE_PATH = os.path.abspath(os.path.join(SAVE_PATH, "merged"))
+
     LANDS_ZIP_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands_zip"))
     LANDS_PATH = os.path.abspath(os.path.join(SHP_PATH, "lands"))
 
@@ -32,6 +34,12 @@ class DataConfiguration:
     LANDS_GDF_REGULAR_PNG = f"{LANDS_GDF_REGULAR_NAME}.png"
     LANDS_GDF_IRREGULAR_PNG = f"{LANDS_GDF_IRREGULAR_NAME}.png"
 
+    LANDS_DATA_IRREGULAR_NAME = "lands_data_irregular"
+    LANDS_DATA_IRREGULAR_PT = f"{LANDS_DATA_IRREGULAR_NAME}.pt"
+
+    LANDS_DATA_REGULAR_NAME = "lands_data_regular"
+    LANDS_DATA_REGULAR_PT = f"{LANDS_DATA_REGULAR_NAME}.pt"
+
     LAND_AREA_THRESHOLD = 100
 
     THRESHOLD_MRR_RATIO_REGULAR = 0.83
@@ -43,6 +51,9 @@ class DataConfiguration:
     IRREGULAR_NUMBER_TO_GENERATE = 2000
 
     SIMPLIFICATION_DEGREE = 10.0
+
+    ROTATION_DEGREE_MAX = 360
+    ROTATION_INTERVAL = 18.0
 
 
 class ModelConfiguration:
