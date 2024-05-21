@@ -58,9 +58,14 @@ class DataConfiguration:
     ROTATION_DEGREE_MAX = 360
     ROTATION_INTERVAL = 18.0
 
+    TRAIN_SPLIT_RATIO = 0.75
+    VALIDATION_SPLIT_RATIO = 0.15
+    TEST_SPLIT_RATIO = 0.1
+    SPLIT_RATIOS = [TRAIN_SPLIT_RATIO, VALIDATION_SPLIT_RATIO, TEST_SPLIT_RATIO]
+
 
 class ModelConfiguration:
-    pass
+    BATCH_SIZE = 64
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
