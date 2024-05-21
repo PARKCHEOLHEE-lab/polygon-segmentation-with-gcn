@@ -21,7 +21,9 @@ class RegularPolygonDataset(Dataset):
         self.regular_polygons = []
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_REGULAR_PT in file:
-                self.regular_polygons.extend(torch.load(os.path.join(data_path, file)))
+                self.regular_polygons.extend(
+                    torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
+                )
 
     def __len__(self):
         return len(self.regular_polygons)
@@ -36,7 +38,9 @@ class IrregularPolygonDataset(Dataset):
         self.irregular_polygons = []
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_IRREGULAR_PT in file:
-                self.irregular_polygons.extend(torch.load(os.path.join(data_path, file)))
+                self.irregular_polygons.extend(
+                    torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
+                )
 
     def __len__(self):
         return len(self.irregular_polygons)
@@ -46,9 +50,9 @@ class IrregularPolygonDataset(Dataset):
 
 
 class PolygonGraphDataset(Dataset):
-    def __init__(self, regular_polygons: RegularPolygonDataset, irregular_polygons: IrregularPolygonDataset):
-        self.regular_polygons = regular_polygons
-        self.irregular_polygons = irregular_polygons
+    def __init__(self):
+        self.regular_polygons = RegularPolygonDataset()
+        self.irregular_polygons = IrregularPolygonDataset()
 
         self.train_dataloader, self.validation_dataloder, self.test_dataloader = self._get_dataloaders(
             self.regular_polygons, self.irregular_polygons
