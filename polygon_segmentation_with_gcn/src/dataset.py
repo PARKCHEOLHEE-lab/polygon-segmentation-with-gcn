@@ -21,9 +21,13 @@ class RegularPolygonDataset(Dataset):
         self.regular_polygons = []
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_REGULAR_PT in file:
-                self.regular_polygons.extend(
-                    torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
-                )
+                data = torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
+
+                # Remove area features
+                for each_data in data:
+                    each_data.x = each_data.x[:, :-1]
+
+                self.regular_polygons.extend(data)
 
     def __len__(self):
         return len(self.regular_polygons)
@@ -38,9 +42,13 @@ class IrregularPolygonDataset(Dataset):
         self.irregular_polygons = []
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_IRREGULAR_PT in file:
-                self.irregular_polygons.extend(
-                    torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
-                )
+                data = torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
+
+                # Remove area features
+                for each_data in data:
+                    each_data.x = each_data.x[:, :-1]
+
+                self.irregular_polygons.extend(data)
 
     def __len__(self):
         return len(self.irregular_polygons)
