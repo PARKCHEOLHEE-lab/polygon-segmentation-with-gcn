@@ -11,21 +11,34 @@ import torch
 
 from typing import Tuple, List
 from torch.utils.data import ConcatDataset, random_split
-from torch_geometric.data import DataLoader, Dataset, Data
+from torch_geometric.data import Dataset, Data
+from torch_geometric.loader import DataLoader
 from polygon_segmentation_with_gcn.src.config import Configuration
 
 
-class RegularPolygonDataset(Dataset):
+class DatasetHelper:
+    def __init__(self):
+        pass
+
+    def _convert_to_torch_tensor(self, data: List[Data]):
+        # Remove area features and convert numpy array to torch tensor
+        for each_data in data:
+            each_data.x = each_data.x[:, :-1]
+            each_data.x = torch.tensor(each_data.x, dtype=torch.float32).to(Configuration.DEVICE)
+            each_data.edge_weight = torch.tensor(each_data.edge_weight, dtype=torch.float32).to(Configuration.DEVICE)
+            each_data.edge_index = torch.tensor(each_data.edge_index).to(Configuration.DEVICE)
+            each_data.edge_label_index = torch.tensor(each_data.edge_label_index).to(Configuration.DEVICE)
+            each_data.edge_label = torch.ones([each_data.edge_label_index.shape[1]]).to(Configuration.DEVICE)
+
+
+class RegularPolygonDataset(Dataset, DatasetHelper):
     def __init__(self, data_path: str = Configuration.MERGED_SAVE_PATH):
         self.regular_polygons: List[Data]
         self.regular_polygons = []
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_REGULAR_PT in file:
-                data = torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
-
-                # Remove area features
-                for each_data in data:
-                    each_data.x = each_data.x[:, :-1]
+                data = torch.load(os.path.join(data_path, file))
+                self._convert_to_torch_tensor(data)
 
                 self.regular_polygons.extend(data)
 
@@ -36,17 +49,14 @@ class RegularPolygonDataset(Dataset):
         return self.regular_polygons[index]
 
 
-class IrregularPolygonDataset(Dataset):
+class IrregularPolygonDataset(Dataset, DatasetHelper):
     def __init__(self, data_path: str = Configuration.MERGED_SAVE_PATH):
         self.irregular_polygons: List[Data]
         self.irregular_polygons = []
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_IRREGULAR_PT in file:
-                data = torch.load(os.path.join(data_path, file), map_location=Configuration.DEVICE)
-
-                # Remove area features
-                for each_data in data:
-                    each_data.x = each_data.x[:, :-1]
+                data = torch.load(os.path.join(data_path, file))
+                self._convert_to_torch_tensor(data)
 
                 self.irregular_polygons.extend(data)
 
