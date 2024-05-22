@@ -66,6 +66,12 @@ class DataConfiguration:
 
 class ModelConfiguration:
     BATCH_SIZE = 64
+    EPOCH = 1000
+    HIDDEN_CHANNELS = 32
+    OUT_CHANNELS = 8
+    LEARNING_RATE = 0.01
+
+    LOG_INTERVAL = 1
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
