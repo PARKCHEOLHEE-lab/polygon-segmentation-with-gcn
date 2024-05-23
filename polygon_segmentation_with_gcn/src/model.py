@@ -113,6 +113,7 @@ class PolygonSegmenterTrainer:
             self.model.load_state_dict(self.states["model_state_dict"])
             self.optimizer.load_state_dict(self.states["optimizer_state_dict"])
             self.lr_scheduler.load_state_dict(self.states["lr_scheduler_state_dict"])
+            print(f"Set pre-trained all states from {self.states_path} \n")
 
     def _set_summary_writer(self):
         self.log_dir = os.path.join(Configuration.LOG_DIR, datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
@@ -125,8 +126,8 @@ class PolygonSegmenterTrainer:
         os.makedirs(self.states_dir, exist_ok=True)
 
         self.states = {}
+        self.states_path = os.path.join(self.states_dir, Configuration.STATES_PTH)
         if len(os.listdir(self.states_dir)) > 0:
-            self.states_path = os.path.join(self.states_dir, Configuration.STATES_PTH)
             self.states = torch.load(self.states_path)
             print(f"Load pre-trained states from {self.states_path} \n")
 
@@ -229,7 +230,7 @@ class PolygonSegmenterTrainer:
                     "lr_scheduler_state_dict": self.lr_scheduler.state_dict(),
                 }
 
-                torch.save(states, os.path.join(self.states_dir, Configuration.STATES_PTH))
+                torch.save(states, self.states_path)
 
                 print(f"Epoch: {epoch}th Train Loss: {avg_train_loss}, Val Loss: {avg_validation_loss}")
 
@@ -256,5 +257,7 @@ if __name__ == "__main__":
         out_channels=Configuration.OUT_CHANNELS,
     )
 
-    polygon_segmenter_trainer = PolygonSegmenterTrainer(dataset=dataset, model=model)
+    polygon_segmenter_trainer = PolygonSegmenterTrainer(
+        dataset=dataset, model=model, pre_trained_path="polygon_segmentation_with_gcn/runs/2024-05-23_11-54-27"
+    )
     polygon_segmenter_trainer.train()
