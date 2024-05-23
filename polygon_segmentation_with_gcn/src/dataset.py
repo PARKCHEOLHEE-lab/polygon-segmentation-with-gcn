@@ -14,6 +14,7 @@ from torch.utils.data import ConcatDataset, random_split
 from torch_geometric.data import Dataset, Data
 from torch_geometric.loader import DataLoader
 from polygon_segmentation_with_gcn.src.config import Configuration
+from polygon_segmentation_with_gcn.src.commonutils import runtime_calculator
 
 
 class DatasetHelper:
@@ -32,6 +33,7 @@ class DatasetHelper:
 
 
 class RegularPolygonDataset(Dataset, DatasetHelper):
+    @runtime_calculator
     def __init__(self, data_path: str = Configuration.MERGED_SAVE_PATH):
         self.regular_polygons: List[Data]
         self.regular_polygons = []
@@ -50,6 +52,7 @@ class RegularPolygonDataset(Dataset, DatasetHelper):
 
 
 class IrregularPolygonDataset(Dataset, DatasetHelper):
+    @runtime_calculator
     def __init__(self, data_path: str = Configuration.MERGED_SAVE_PATH):
         self.irregular_polygons: List[Data]
         self.irregular_polygons = []
