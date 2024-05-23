@@ -65,15 +65,15 @@ class DataConfiguration:
 
 
 class ModelConfiguration:
-    EPOCH = 1000
+    EPOCH = 100
 
     DROPOUT_RATE = 0.5
     BATCH_SIZE = 64
-    HIDDEN_CHANNELS = 32
-    OUT_CHANNELS = 8
-    LEARNING_RATE = 0.01
+    HIDDEN_CHANNELS = 128
+    OUT_CHANNELS = 64
+    LEARNING_RATE = 0.00001
 
-    LOG_INTERVAL = 1
+    CONNECTIVITY_THRESHOLD = 0.5
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
@@ -89,7 +89,8 @@ class Configuration(DataConfiguration, ModelConfiguration):
     DEFAULT_SEED = 777
     SEED_SET = None
 
-    LOG_DIR = "polygon-segmentation-with-gcn/runs"
+    LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
+    STATES_PTH = "states.pth"
 
     @staticmethod
     def set_seed(seed: int = DEFAULT_SEED):
