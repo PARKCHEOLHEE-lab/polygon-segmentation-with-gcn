@@ -1,4 +1,5 @@
 debugvisualizer/
+runs/
 __pycache__
 
 *.dbf
