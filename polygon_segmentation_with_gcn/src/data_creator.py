@@ -632,11 +632,17 @@ class DataCreatorHelper:
             List[LineString]: connected segments
         """
 
+        if len(edge_indices) == 0:
+            return []
+
         exterior_coordinates = polygon.exterior.coords[:-1]
 
         connected_segments = []
         for i in range(edge_indices.shape[1]):
             i1, i2 = edge_indices[:, i]
+            if None in (i1, i2):
+                continue
+
             connected_segments.append(LineString([exterior_coordinates[i1], exterior_coordinates[i2]]))
 
         return connected_segments

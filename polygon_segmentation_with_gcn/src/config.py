@@ -73,7 +73,7 @@ class ModelConfiguration:
     OUT_CHANNELS = 64
     LEARNING_RATE = 0.00001
 
-    CONNECTIVITY_THRESHOLD = 0.5
+    CONNECTIVITY_THRESHOLD = 0.0
 
 
 class Configuration(DataConfiguration, ModelConfiguration):

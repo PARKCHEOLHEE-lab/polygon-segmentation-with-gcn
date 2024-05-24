@@ -11,15 +11,21 @@ import torch
 import torch.nn as nn
 import datetime
 
+from shapely import geometry
+from typing import List
 from tqdm import tqdm
 from torch_geometric.data import Batch
+from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, Sequential
 from torch_geometric.utils import negative_sampling
+from torch.optim import lr_scheduler
+from torch.utils.data import Subset
+from torch.utils.tensorboard import SummaryWriter
+
 from polygon_segmentation_with_gcn.src.commonutils import runtime_calculator
 from polygon_segmentation_with_gcn.src.config import Configuration
 from polygon_segmentation_with_gcn.src.dataset import PolygonGraphDataset
-from torch.optim import lr_scheduler
-from torch.utils.tensorboard import SummaryWriter
+from polygon_segmentation_with_gcn.src.data_creator import DataCreatorHelper
 
 
 class PolygonSegmenterGCN(nn.Module):
@@ -56,7 +62,7 @@ class PolygonSegmenterGCN(nn.Module):
         return (encoded[edge_label_index[0]] * encoded[edge_label_index[1]]).sum(dim=1)
 
     @torch.no_grad()
-    def infer(self, data_to_infer: Batch):
+    def infer(self, data_to_infer: Batch) -> List[torch.Tensor]:
         self.eval()
 
         segmentation_indices = []
@@ -73,7 +79,7 @@ class PolygonSegmenterGCN(nn.Module):
             connection_probability = encoded @ encoded.t()
             connection_probability *= mask_to_ignore.long()
 
-            infered = (connection_probability > Configuration.CONNECTIVITY_THRESHOLD).nonzero()
+            infered = (connection_probability > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
             segmentation_indices.append(infered)
 
         self.train()
@@ -203,6 +209,48 @@ class PolygonSegmenterTrainer:
 
         return sum(validation_losses) / len(validation_losses)
 
+    def evaluate(self, dataset: PolygonGraphDataset, model: nn.Module) -> None:
+        """_summary_
+
+        Args:
+            dataset (PolygonGraphDataset): _description_
+            model (nn.Module): _description_
+        """
+
+        c = 4
+
+        train_indices_to_viz = torch.randperm(len(dataset.train_dataloader))[:c]
+        train_subset = Subset(dataset.train_dataloader.dataset, train_indices_to_viz)
+        train_sampled = DataLoader(train_subset, batch_size=c)
+
+        validation_indices_to_viz = torch.randperm(len(dataset.validation_dataloder))[:c]
+        validation_subset = Subset(dataset.validation_dataloder.dataset, validation_indices_to_viz)
+        validation_sampled = DataLoader(validation_subset, batch_size=c)
+
+        train_batch = [data_to_infer for data_to_infer in train_sampled][0]
+        validation_batch = [data_to_infer for data_to_infer in validation_sampled][0]
+
+        train_segmentation_indices = model.infer(train_batch)
+        for si in range(len(train_segmentation_indices)):
+            each_data = train_batch[si]
+            each_segmentation_indices = train_segmentation_indices[si]
+
+            polygon = geometry.Polygon(each_data.x[:, :2].detach().cpu().numpy())
+            predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(polygon, each_segmentation_indices)
+            label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_data.edge_label_index_only
+            )
+
+            print(predicted_edges)
+            print(label_edges)
+
+            # self.summary_writer.add_figure(
+            #     f"train_segmentation_{si}", Plotter.plot_polygon_segmentation(polygon, predicted_edges, label_edges)
+            # )
+
+        validation_segmentation_indices = model.infer(validation_batch)
+        print(validation_segmentation_indices)
+
     def train(self) -> None:
         """_summary_"""
 
@@ -243,10 +291,11 @@ class PolygonSegmenterTrainer:
             self.summary_writer.add_scalar("train_loss", avg_train_loss, epoch)
             self.summary_writer.add_scalar("validation_loss", avg_validation_loss, epoch)
 
+            self.evaluate(self.dataset, self.model)
+
 
 if __name__ == "__main__":
     # from debugvisualizer.debugvisualizer import Plotter
-    # from shapely import geometry
 
     Configuration.set_seed()
 
@@ -257,7 +306,5 @@ if __name__ == "__main__":
         out_channels=Configuration.OUT_CHANNELS,
     )
 
-    polygon_segmenter_trainer = PolygonSegmenterTrainer(
-        dataset=dataset, model=model, pre_trained_path="polygon_segmentation_with_gcn/runs/2024-05-23_11-54-27"
-    )
+    polygon_segmenter_trainer = PolygonSegmenterTrainer(dataset=dataset, model=model)
     polygon_segmenter_trainer.train()
