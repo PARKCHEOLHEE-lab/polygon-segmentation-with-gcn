@@ -73,8 +73,8 @@ class ModelConfiguration:
     OUT_CHANNELS = 64
     LEARNING_RATE = 0.00001
 
-    CONNECTIVITY_THRESHOLD = 0.0
-    NEGATIVE_SAMPLE_MULTIPLIER = 1
+    CONNECTIVITY_THRESHOLD = 0.5
+    NEGATIVE_SAMPLE_MULTIPLIER = 3
 
 
 class Configuration(DataConfiguration, ModelConfiguration):

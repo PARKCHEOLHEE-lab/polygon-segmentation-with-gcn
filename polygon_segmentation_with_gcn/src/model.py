@@ -246,6 +246,82 @@ class PolygonSegmenterTrainer:
 
         return sum(validation_losses) / len(validation_losses)
 
+    def _get_figures_to_evaluate_qualitatively(self, batch: Batch, indices: List[torch.Tensor]):
+        dpi = 100
+        figsize = (5, 5)
+
+        figures = []
+
+        for si in range(len(indices)):
+            each_data = batch[si]
+            each_irregular_segmentation_indices = indices[si]
+
+            polygon = geometry.Polygon(each_data.x[:, :2].detach().cpu().numpy())
+            predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_irregular_segmentation_indices
+            )
+            label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_data.edge_label_index_only
+            )
+
+            figure = plt.figure(figsize=figsize, dpi=dpi)
+            ax = figure.add_subplot(1, 1, 1)
+            ax.axis("equal")
+
+            added_predicted_label = False
+            for predicted_edge in predicted_edges:
+                if added_predicted_label:
+                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.5)
+                else:
+                    added_predicted_label = True
+                    ax.plot(
+                        *predicted_edge.coords.xy,
+                        color="green",
+                        linewidth=1.0,
+                        alpha=0.5,
+                        label="predicted",
+                    )
+
+            added_ground_truth_label = False
+            for label_edge in label_edges:
+                if added_ground_truth_label:
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0)
+                else:
+                    added_ground_truth_label = True
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, label="ground truth")
+
+            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, label="polygon")
+            ax.fill(*polygon.exterior.coords.xy, alpha=0.1, color="black")
+
+            x, y = polygon.exterior.coords.xy
+            ax.scatter(x, y, color="red", s=7, label="vertices")
+            ax.grid(True, color="lightgray")
+
+            annotation = f"""
+                loc: {int(each_data.loc)}
+                name: {each_data.name}
+            """
+
+            plt.axis([-2.0, 2.0, -2.0, 2.0])
+
+            plt.gcf().text(
+                0.45,
+                0.2,
+                annotation,
+                va="center",
+                ha="center",
+                color="black",
+                fontsize=8,
+            )
+
+            plt.legend()
+
+            figures.append(figure)
+
+            plt.close(figure)
+
+        return figures
+
     @runtime_calculator
     def evaluate_qualitatively(
         self, dataset: PolygonGraphDataset, model: nn.Module, epoch: int, viz_count: int = 10
@@ -275,110 +351,8 @@ class PolygonSegmenterTrainer:
         figsize = (5, 5)
 
         figures = []
-
-        for si in range(len(irregular_segmentation_indices)):
-            each_irregular_data = irregular_batch[si]
-            each_irregular_segmentation_indices = irregular_segmentation_indices[si]
-
-            polygon = geometry.Polygon(each_irregular_data.x[:, :2].detach().cpu().numpy())
-            predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                polygon, each_irregular_segmentation_indices
-            )
-            label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                polygon, each_irregular_data.edge_label_index_only
-            )
-
-            figure = plt.figure(figsize=figsize, dpi=dpi)
-            ax = figure.add_subplot(1, 1, 1)
-            ax.axis("equal")
-
-            added_predicted_label = False
-            for predicted_edge in predicted_edges:
-                if added_predicted_label:
-                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.2)
-                else:
-                    added_predicted_label = True
-                    ax.plot(
-                        *predicted_edge.coords.xy,
-                        color="green",
-                        linewidth=1.0,
-                        alpha=0.2,
-                        label="predicted",
-                    )
-
-            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, label="polygon")
-            ax.fill(*polygon.exterior.coords.xy, alpha=0.1, color="black")
-
-            added_ground_truth_label = False
-            for label_edge in label_edges:
-                if added_ground_truth_label:
-                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0)
-                else:
-                    added_ground_truth_label = True
-                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, label="ground truth")
-
-            x, y = polygon.exterior.coords.xy
-            ax.scatter(x, y, color="red", s=7, label="vertices")
-            ax.grid(True, color="lightgray")
-
-            plt.axis([-2.0, 2.0, -2.0, 2.0])
-            plt.legend()
-
-            figures.append(figure)
-
-            plt.close(figure)
-
-        for vsi in range(len(regular_segmentation_indices)):
-            each_regular_data = regular_batch[vsi]
-            each_regular_segmentation_indices = regular_segmentation_indices[vsi]
-
-            polygon = geometry.Polygon(each_regular_data.x[:, :2].detach().cpu().numpy())
-            predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                polygon, each_regular_segmentation_indices
-            )
-            label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                polygon, each_regular_data.edge_label_index_only
-            )
-
-            figure = plt.figure(figsize=figsize, dpi=dpi)
-            ax = figure.add_subplot(1, 1, 1)
-            ax.axis("equal")
-
-            added_predicted_label = False
-            for predicted_edge in predicted_edges:
-                if added_predicted_label:
-                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.2)
-                else:
-                    added_predicted_label = True
-                    ax.plot(
-                        *predicted_edge.coords.xy,
-                        color="green",
-                        linewidth=1.0,
-                        alpha=0.2,
-                        label="predicted",
-                    )
-
-            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, label="polygon")
-            ax.fill(*polygon.exterior.coords.xy, alpha=0.1, color="black")
-
-            added_ground_truth_label = False
-            for label_edge in label_edges:
-                if added_ground_truth_label:
-                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0)
-                else:
-                    added_ground_truth_label = True
-                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, label="ground truth")
-
-            x, y = polygon.exterior.coords.xy
-            ax.scatter(x, y, color="red", s=7, label="vertices")
-            ax.grid(True, color="lightgray")
-
-            plt.axis([-2.0, 2.0, -2.0, 2.0])
-            plt.legend()
-
-            figures.append(figure)
-
-            plt.close(figure)
+        figures += self._get_figures_to_evaluate_qualitatively(irregular_batch, irregular_segmentation_indices)
+        figures += self._get_figures_to_evaluate_qualitatively(regular_batch, regular_segmentation_indices)
 
         col_num = 5
         row_num = int(np.ceil((viz_count * 2) / col_num))
@@ -402,7 +376,9 @@ class PolygonSegmenterTrainer:
             else:
                 output_width += img_size
 
-        self.summary_writer.add_image(f"train_segmentation_{epoch}", np.array(merged_image), epoch, dataformats="HWC")
+        self.summary_writer.add_image(
+            f"qualitative_evaluation_{epoch}", np.array(merged_image), epoch, dataformats="HWC"
+        )
 
     def train(self) -> None:
         """_summary_"""
