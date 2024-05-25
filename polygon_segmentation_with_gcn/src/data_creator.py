@@ -647,6 +647,24 @@ class DataCreatorHelper:
 
         return connected_segments
 
+    @staticmethod
+    def fig_to_img(figure: plt.Figure) -> Image.Image:
+        """Convert a figure to an image
+
+        Args:
+            figure (plt.Figure): figure to convert to an image
+
+        Returns:
+            Image.Image: image
+        """
+
+        buf = io.BytesIO()
+        figure.savefig(buf)
+        buf.seek(0)
+        image = Image.open(buf)
+
+        return image
+
 
 class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.LandUsage):
     def __init__(
@@ -1114,14 +1132,6 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
             max_size_to_visualize (int, optional): maximum size to visualize. Defaults to 200.
         """
 
-        def fig_to_img(figure):
-            buf = io.BytesIO()
-            figure.savefig(buf)
-            buf.seek(0)
-            image = Image.open(buf)
-
-            return image
-
         dpi = 100
         figsize = (5, 5)
         col_num = 4
@@ -1187,7 +1197,7 @@ class DataCreator(DataCreatorHelper, DataConfiguration, enums.LandShape, enums.L
                 fontsize=8,
             )
 
-            image = fig_to_img(figure)
+            image = self.fig_to_img(figure)
 
             merged_image.paste(image, (output_width, output_height))
 
