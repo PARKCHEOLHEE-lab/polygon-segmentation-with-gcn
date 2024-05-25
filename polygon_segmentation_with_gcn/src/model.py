@@ -20,6 +20,7 @@ from tqdm import tqdm
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, Sequential
+from torch_geometric.nn.norm import BatchNorm
 from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
@@ -38,18 +39,23 @@ class PolygonSegmenterGCN(nn.Module):
             input_args="x, edge_index, edge_weight",
             modules=[
                 (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
                 nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
                 nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
                 nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
                 nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
                 nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
@@ -85,7 +91,7 @@ class PolygonSegmenterGCN(nn.Module):
 
         decoded = (encoded[edge_label_index[0]] * encoded[edge_label_index[1]]).sum(dim=1)
 
-        return decoded.sigmoid()
+        return decoded
 
     @torch.no_grad()
     def infer(self, data_to_infer: Batch) -> List[torch.Tensor]:
@@ -102,7 +108,7 @@ class PolygonSegmenterGCN(nn.Module):
             mask_to_ignore[each_data.edge_index[0], each_data.edge_index[1]] = False
             mask_to_ignore[each_data.edge_index[1], each_data.edge_index[0]] = False
 
-            connection_probability = (encoded @ encoded.t()).sigmoid()
+            connection_probability = encoded @ encoded.t()
             connection_probability *= mask_to_ignore.long()
 
             infered = (connection_probability > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
@@ -164,7 +170,7 @@ class PolygonSegmenterTrainer:
             print(f"Load pre-trained states from {self.states_path} \n")
 
     def _set_loss_function(self):
-        self.loss_function = nn.BCELoss()
+        self.loss_function = nn.BCEWithLogitsLoss()
 
     def _set_optimizer(self):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=Configuration.LEARNING_RATE)
@@ -251,35 +257,35 @@ class PolygonSegmenterTrainer:
             model (nn.Module): _description_
         """
 
-        train_indices_to_viz = torch.randperm(len(dataset.train_dataloader))[:viz_count]
-        train_subset = Subset(dataset.train_dataloader.dataset, train_indices_to_viz)
-        train_sampled = DataLoader(train_subset, batch_size=viz_count)
+        irregular_indices_to_viz = torch.randperm(len(dataset.irregular_polygons))[:viz_count]
+        irregular_subset = Subset(dataset.irregular_polygons, irregular_indices_to_viz)
+        irregular_sampled = DataLoader(irregular_subset, batch_size=viz_count)
 
-        validation_indices_to_viz = torch.randperm(len(dataset.validation_dataloder))[:viz_count]
-        validation_subset = Subset(dataset.validation_dataloder.dataset, validation_indices_to_viz)
-        validation_sampled = DataLoader(validation_subset, batch_size=viz_count)
+        regular_indices_to_viz = torch.randperm(len(dataset.regular_polygons))[:viz_count]
+        regular_subset = Subset(dataset.regular_polygons, regular_indices_to_viz)
+        regular_sampled = DataLoader(regular_subset, batch_size=viz_count)
 
-        train_batch = [data_to_infer for data_to_infer in train_sampled][0]
-        validation_batch = [data_to_infer for data_to_infer in validation_sampled][0]
+        irregular_batch = [data_to_infer for data_to_infer in irregular_sampled][0]
+        regular_batch = [data_to_infer for data_to_infer in regular_sampled][0]
 
-        train_segmentation_indices = model.infer(train_batch)
-        validation_segmentation_indices = model.infer(validation_batch)
+        irregular_segmentation_indices = model.infer(irregular_batch)
+        regular_segmentation_indices = model.infer(regular_batch)
 
         dpi = 100
         figsize = (5, 5)
 
         figures = []
 
-        for tsi in range(len(train_segmentation_indices)):
-            each_train_data = train_batch[tsi]
-            each_train_segmentation_indices = train_segmentation_indices[tsi]
+        for si in range(len(irregular_segmentation_indices)):
+            each_irregular_data = irregular_batch[si]
+            each_irregular_segmentation_indices = irregular_segmentation_indices[si]
 
-            train_polygon = geometry.Polygon(each_train_data.x[:, :2].detach().cpu().numpy())
-            train_predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                train_polygon, each_train_segmentation_indices
+            polygon = geometry.Polygon(each_irregular_data.x[:, :2].detach().cpu().numpy())
+            predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_irregular_segmentation_indices
             )
-            train_label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                train_polygon, each_train_data.edge_label_index_only
+            label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_irregular_data.edge_label_index_only
             )
 
             figure = plt.figure(figsize=figsize, dpi=dpi)
@@ -287,31 +293,31 @@ class PolygonSegmenterTrainer:
             ax.axis("equal")
 
             added_predicted_label = False
-            for train_predicted_edge in train_predicted_edges:
+            for predicted_edge in predicted_edges:
                 if added_predicted_label:
-                    ax.plot(*train_predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.2)
+                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.2)
                 else:
                     added_predicted_label = True
                     ax.plot(
-                        *train_predicted_edge.coords.xy,
+                        *predicted_edge.coords.xy,
                         color="green",
                         linewidth=1.0,
                         alpha=0.2,
-                        label="train predicted",
+                        label="predicted",
                     )
 
-            ax.plot(*train_polygon.exterior.coords.xy, color="black", linewidth=0.6, label="train polygon")
-            ax.fill(*train_polygon.exterior.coords.xy, alpha=0.1, color="black")
+            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, label="polygon")
+            ax.fill(*polygon.exterior.coords.xy, alpha=0.1, color="black")
 
             added_ground_truth_label = False
-            for train_label_edge in train_label_edges:
+            for label_edge in label_edges:
                 if added_ground_truth_label:
-                    ax.plot(*train_label_edge.coords.xy, color="blue", linewidth=1.0)
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0)
                 else:
                     added_ground_truth_label = True
-                    ax.plot(*train_label_edge.coords.xy, color="blue", linewidth=1.0, label="train ground truth")
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, label="ground truth")
 
-            x, y = train_polygon.exterior.coords.xy
+            x, y = polygon.exterior.coords.xy
             ax.scatter(x, y, color="red", s=7, label="vertices")
             ax.grid(True, color="lightgray")
 
@@ -322,16 +328,16 @@ class PolygonSegmenterTrainer:
 
             plt.close(figure)
 
-        for vsi in range(len(validation_segmentation_indices)):
-            each_validation_data = validation_batch[vsi]
-            each_validation_segmentation_indices = validation_segmentation_indices[vsi]
+        for vsi in range(len(regular_segmentation_indices)):
+            each_regular_data = regular_batch[vsi]
+            each_regular_segmentation_indices = regular_segmentation_indices[vsi]
 
-            validation_polygon = geometry.Polygon(each_validation_data.x[:, :2].detach().cpu().numpy())
-            validation_predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                validation_polygon, each_validation_segmentation_indices
+            polygon = geometry.Polygon(each_regular_data.x[:, :2].detach().cpu().numpy())
+            predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_regular_segmentation_indices
             )
-            validation_label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                validation_polygon, each_validation_data.edge_label_index_only
+            label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
+                polygon, each_regular_data.edge_label_index_only
             )
 
             figure = plt.figure(figsize=figsize, dpi=dpi)
@@ -339,33 +345,31 @@ class PolygonSegmenterTrainer:
             ax.axis("equal")
 
             added_predicted_label = False
-            for validation_predicted_edge in validation_predicted_edges:
+            for predicted_edge in predicted_edges:
                 if added_predicted_label:
-                    ax.plot(*validation_predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.2)
+                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.2)
                 else:
                     added_predicted_label = True
                     ax.plot(
-                        *validation_predicted_edge.coords.xy,
+                        *predicted_edge.coords.xy,
                         color="green",
                         linewidth=1.0,
                         alpha=0.2,
-                        label="validation predicted",
+                        label="predicted",
                     )
 
-            ax.plot(*validation_polygon.exterior.coords.xy, color="black", linewidth=0.6, label="validation polygon")
-            ax.fill(*validation_polygon.exterior.coords.xy, alpha=0.1, color="black")
+            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, label="polygon")
+            ax.fill(*polygon.exterior.coords.xy, alpha=0.1, color="black")
 
             added_ground_truth_label = False
-            for validation_label_edge in validation_label_edges:
+            for label_edge in label_edges:
                 if added_ground_truth_label:
-                    ax.plot(*validation_label_edge.coords.xy, color="blue", linewidth=1.0)
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0)
                 else:
                     added_ground_truth_label = True
-                    ax.plot(
-                        *validation_label_edge.coords.xy, color="blue", linewidth=1.0, label="validation ground truth"
-                    )
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, label="ground truth")
 
-            x, y = validation_polygon.exterior.coords.xy
+            x, y = polygon.exterior.coords.xy
             ax.scatter(x, y, color="red", s=7, label="vertices")
             ax.grid(True, color="lightgray")
 
