@@ -120,7 +120,7 @@ class PolygonSegmenterGCN(nn.Module):
         negative_edge_index = negative_sampling(
             edge_index=data.edge_index,
             num_nodes=data.num_nodes,
-            num_neg_samples=data.edge_label_index.shape[1],
+            num_neg_samples=data.edge_label_index.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER,
             method="sparse",
         )
 
@@ -198,7 +198,12 @@ class PolygonSegmenterTrainer:
         for data_to_train in tqdm(dataset.train_dataloader, desc=f"Training... epoch: {epoch}/{Configuration.EPOCH}"):
             train_decoded = model(data_to_train)
 
-            train_labels = torch.hstack([data_to_train.edge_label, torch.zeros_like(data_to_train.edge_label)])
+            train_labels = torch.hstack(
+                [
+                    data_to_train.edge_label,
+                    torch.zeros_like(data_to_train.edge_label.repeat(Configuration.NEGATIVE_SAMPLE_MULTIPLIER)),
+                ]
+            )
             train_loss = loss_function(train_decoded, train_labels)
 
             train_losses.append(train_loss.item())
@@ -222,7 +227,10 @@ class PolygonSegmenterTrainer:
             validation_decoded = model(data_to_validate)
 
             validation_labels = torch.hstack(
-                [data_to_validate.edge_label, torch.zeros_like(data_to_validate.edge_label)]
+                [
+                    data_to_validate.edge_label,
+                    torch.zeros_like(data_to_validate.edge_label.repeat(Configuration.NEGATIVE_SAMPLE_MULTIPLIER)),
+                ]
             )
             validation_loss = loss_function(validation_decoded, validation_labels)
 
@@ -232,6 +240,7 @@ class PolygonSegmenterTrainer:
 
         return sum(validation_losses) / len(validation_losses)
 
+    @runtime_calculator
     def evaluate_qualitatively(
         self, dataset: PolygonGraphDataset, model: nn.Module, epoch: int, viz_count: int = 10
     ) -> None:
@@ -389,9 +398,7 @@ class PolygonSegmenterTrainer:
             else:
                 output_width += img_size
 
-        self.summary_writer.add_image(
-            f"train_segmentation_{epoch}", np.array(merged_image), dataformats="HWC", step=epoch
-        )
+        self.summary_writer.add_image(f"train_segmentation_{epoch}", np.array(merged_image), epoch, dataformats="HWC")
 
     def train(self) -> None:
         """_summary_"""

@@ -74,6 +74,7 @@ class ModelConfiguration:
     LEARNING_RATE = 0.00001
 
     CONNECTIVITY_THRESHOLD = 0.5
+    NEGATIVE_SAMPLE_MULTIPLIER = 2
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
