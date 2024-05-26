@@ -65,7 +65,7 @@ class DataConfiguration:
 
 
 class ModelConfiguration:
-    EPOCH = 100
+    EPOCH = 300
 
     DROPOUT_RATE = 0.5
     BATCH_SIZE = 64
@@ -74,7 +74,7 @@ class ModelConfiguration:
     LEARNING_RATE = 0.00002
 
     CONNECTIVITY_THRESHOLD = 0.5
-    NEGATIVE_SAMPLE_MULTIPLIER = 3
+    NEGATIVE_SAMPLE_MULTIPLIER = 1
 
 
 class Configuration(DataConfiguration, ModelConfiguration):

@@ -19,7 +19,7 @@ from typing import List
 from tqdm import tqdm
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, Sequential
+from torch_geometric.nn import GCNConv, GATConv, Sequential
 from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
@@ -31,30 +31,7 @@ from polygon_segmentation_with_gcn.src.dataset import PolygonGraphDataset
 from polygon_segmentation_with_gcn.src.data_creator import DataCreatorHelper
 
 
-class PolygonSegmenterGCN(nn.Module):
-    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
-        super().__init__()
-        self.main = Sequential(
-            input_args="x, edge_index, edge_weight",
-            modules=[
-                (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
-            ],
-        )
-
-        self.to(Configuration.DEVICE)
-
+class PolygonSegmenter:
     def encode(self, data: Batch) -> torch.Tensor:
         """_summary_
 
@@ -126,6 +103,56 @@ class PolygonSegmenterGCN(nn.Module):
         decoded = self.decode(encoded, edge_label_index=torch.hstack([data.edge_label_index, negative_edge_index]))
 
         return decoded
+
+
+class PolygonSegmenterGCNConv(PolygonSegmenter, nn.Module):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
+        super().__init__()
+        self.main = Sequential(
+            input_args="x, edge_index, edge_weight",
+            modules=[
+                (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
+            ],
+        )
+
+        self.to(Configuration.DEVICE)
+
+
+class PolygonSegmenterGATConv(PolygonSegmenter, nn.Module):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
+        super().__init__()
+        self.main = Sequential(
+            input_args="x, edge_index, edge_weight",
+            modules=[
+                (GATConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
+                (GATConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
+            ],
+        )
+
+        self.to(Configuration.DEVICE)
 
 
 class PolygonSegmenterTrainer:
@@ -422,7 +449,7 @@ if __name__ == "__main__":
     Configuration.set_seed()
 
     dataset = PolygonGraphDataset()
-    model = PolygonSegmenterGCN(
+    model = PolygonSegmenterGATConv(
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
