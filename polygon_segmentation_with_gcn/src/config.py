@@ -68,8 +68,8 @@ class ModelConfiguration:
     EPOCH = 100
 
     DROPOUT_RATE = 0.5
-    BATCH_SIZE = 1
-    HIDDEN_CHANNELS = 128
+    BATCH_SIZE = 64
+    HIDDEN_CHANNELS = 256
     OUT_CHANNELS = 64
     LEARNING_RATE = 0.00002
 

@@ -47,6 +47,8 @@ class PolygonSegmenterGCN(nn.Module):
                 nn.ReLU(inplace=True),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
+                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                nn.ReLU(inplace=True),
                 (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
             ],
         )
@@ -400,8 +402,6 @@ class PolygonSegmenterTrainer:
 
                 torch.save(states, self.states_path)
 
-                print(f"Epoch: {epoch}th Train Loss: {avg_train_loss}, Val Loss: {avg_validation_loss}")
-
             else:
                 states = torch.load(self.states_path)
                 states.update({"epoch": epoch})
@@ -413,13 +413,15 @@ class PolygonSegmenterTrainer:
 
             self.evaluate_qualitatively(self.dataset, self.model, epoch)
 
+            print(f"Epoch: {epoch}th Train Loss: {avg_train_loss}, Val Loss: {avg_validation_loss}")
+
 
 if __name__ == "__main__":
     # from debugvisualizer.debugvisualizer import Plotter
 
     Configuration.set_seed()
 
-    dataset = PolygonGraphDataset(slicer=10)
+    dataset = PolygonGraphDataset()
     model = PolygonSegmenterGCN(
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
