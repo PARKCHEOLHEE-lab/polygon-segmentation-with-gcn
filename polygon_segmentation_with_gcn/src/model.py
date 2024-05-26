@@ -77,7 +77,7 @@ class PolygonSegmenter:
             mask_to_ignore[each_data.edge_index[1], each_data.edge_index[0]] = False
 
             connection_probability = encoded @ encoded.t()
-            connection_probability = connection_probability.sigmoid()
+            connection_probability = connection_probability
             connection_probability *= mask_to_ignore.long()
 
             infered = (connection_probability > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
@@ -138,17 +138,21 @@ class PolygonSegmenterGATConv(PolygonSegmenter, nn.Module):
             modules=[
                 (GATConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                (GATConv(hidden_channels, 128), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                (GATConv(128, 64), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                (GATConv(64, 32), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                (GATConv(32, 16), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+                (GATConv(16, 8), "x, edge_index, edge_weight -> x"),
                 nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
+                nn.Linear(8, 16),
+                nn.ReLU(inplace=True),
+                nn.Linear(16, 32),
+                nn.ReLU(inplace=True),
+                nn.Linear(32, out_channels),
             ],
         )
 
