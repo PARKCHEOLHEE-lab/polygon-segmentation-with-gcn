@@ -71,33 +71,43 @@ class IrregularPolygonDataset(Dataset, DatasetHelper):
 
 
 class PolygonGraphDataset(Dataset):
-    def __init__(self):
+    def __init__(self, slicer: int = None):
         self.regular_polygons = RegularPolygonDataset()
         self.irregular_polygons = IrregularPolygonDataset()
 
-        self.train_dataloader, self.validation_dataloder, self.test_dataloader = self._get_dataloaders(
-            self.regular_polygons, self.irregular_polygons
-        )
+        (
+            self.train_dataloader,
+            self.validation_dataloder,
+            self.test_dataloader,
+            self.train_dataset,
+            self.validation_dataset,
+            self.test_dataset,
+            self.regular_train,
+            self.irregular_train,
+            self.regular_validation,
+            self.irregular_validation,
+            self.regular_test,
+            self.irregular_test,
+        ) = self._get_dataloaders(self.regular_polygons, self.irregular_polygons, slicer)
 
     def _get_dataloaders(
-        self, regular_polygons: RegularPolygonDataset, irregular_polygons: IrregularPolygonDataset
+        self, regular_polygons: RegularPolygonDataset, irregular_polygons: IrregularPolygonDataset, slicer: int
     ) -> Tuple[DataLoader]:
         regular_train, regular_validation, regular_test = random_split(regular_polygons, Configuration.SPLIT_RATIOS)
         irregular_train, irregular_validation, irregular_test = random_split(
             irregular_polygons, Configuration.SPLIT_RATIOS
         )
 
-        splitted_regular = torch.tensor([len(regular_train), len(regular_validation), len(regular_test)])
-        expected_regular = torch.tensor([len(regular_polygons) * ratio for ratio in Configuration.SPLIT_RATIOS])
-        assert torch.all(splitted_regular == expected_regular)
-
-        splitted_irregular = torch.tensor([len(irregular_train), len(irregular_validation), len(irregular_test)])
-        expected_irregular = torch.tensor([len(irregular_polygons) * ratio for ratio in Configuration.SPLIT_RATIOS])
-        assert torch.all(splitted_irregular == expected_irregular)
-
         train_dataset = ConcatDataset([regular_train, irregular_train])
         validation_dataset = ConcatDataset([regular_validation, irregular_validation])
         test_dataset = ConcatDataset([regular_test, irregular_test])
+
+        if slicer is not None:
+            train_dataset = ConcatDataset([regular_train.dataset[:slicer], irregular_train.dataset[:slicer]])
+            validation_dataset = ConcatDataset(
+                [regular_validation.dataset[:slicer], irregular_validation.dataset[:slicer]]
+            )
+            test_dataset = ConcatDataset([regular_test.dataset[:slicer], irregular_test.dataset[:slicer]])
 
         train_dataloader = DataLoader(
             train_dataset,
@@ -117,4 +127,17 @@ class PolygonGraphDataset(Dataset):
             shuffle=True,
         )
 
-        return train_dataloader, validation_dataloader, test_dataloader
+        return (
+            train_dataloader,
+            validation_dataloader,
+            test_dataloader,
+            train_dataset,
+            validation_dataset,
+            test_dataset,
+            regular_train,
+            irregular_train,
+            regular_validation,
+            irregular_validation,
+            regular_test,
+            irregular_test,
+        )

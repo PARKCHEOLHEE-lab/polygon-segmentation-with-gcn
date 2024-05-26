@@ -20,7 +20,6 @@ from tqdm import tqdm
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, Sequential
-from torch_geometric.nn.norm import BatchNorm
 from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
@@ -39,25 +38,15 @@ class PolygonSegmenterGCN(nn.Module):
             input_args="x, edge_index, edge_weight",
             modules=[
                 (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
-                nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
-                nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
-                nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
-                nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                BatchNorm(hidden_channels),
                 nn.ReLU(inplace=True),
-                nn.Dropout(Configuration.DROPOUT_RATE),
                 (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
             ],
         )
@@ -109,6 +98,7 @@ class PolygonSegmenterGCN(nn.Module):
             mask_to_ignore[each_data.edge_index[1], each_data.edge_index[0]] = False
 
             connection_probability = encoded @ encoded.t()
+            connection_probability = connection_probability.sigmoid()
             connection_probability *= mask_to_ignore.long()
 
             infered = (connection_probability > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
@@ -333,12 +323,12 @@ class PolygonSegmenterTrainer:
             model (nn.Module): _description_
         """
 
-        irregular_indices_to_viz = torch.randperm(len(dataset.irregular_polygons))[:viz_count]
-        irregular_subset = Subset(dataset.irregular_polygons, irregular_indices_to_viz)
+        irregular_indices_to_viz = torch.randperm(len(dataset.train_dataset.datasets[1]))[:viz_count]
+        irregular_subset = Subset(dataset.train_dataset.datasets[1], irregular_indices_to_viz)
         irregular_sampled = DataLoader(irregular_subset, batch_size=viz_count)
 
-        regular_indices_to_viz = torch.randperm(len(dataset.regular_polygons))[:viz_count]
-        regular_subset = Subset(dataset.regular_polygons, regular_indices_to_viz)
+        regular_indices_to_viz = torch.randperm(len(dataset.train_dataset.datasets[0]))[:viz_count]
+        regular_subset = Subset(dataset.train_dataset.datasets[0], regular_indices_to_viz)
         regular_sampled = DataLoader(regular_subset, batch_size=viz_count)
 
         irregular_batch = [data_to_infer for data_to_infer in irregular_sampled][0]
@@ -405,6 +395,7 @@ class PolygonSegmenterTrainer:
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "lr_scheduler_state_dict": self.lr_scheduler.state_dict(),
+                    "configuration": {k: v for k, v in Configuration()},
                 }
 
                 torch.save(states, self.states_path)
@@ -428,7 +419,7 @@ if __name__ == "__main__":
 
     Configuration.set_seed()
 
-    dataset = PolygonGraphDataset()
+    dataset = PolygonGraphDataset(slicer=10)
     model = PolygonSegmenterGCN(
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
