@@ -65,7 +65,7 @@ class DataConfiguration:
 
 
 class ModelConfiguration:
-    EPOCH = 150
+    EPOCH = 500
 
     DROPOUT_RATE = 0.5
     BATCH_SIZE = 128
