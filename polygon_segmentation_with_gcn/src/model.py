@@ -19,7 +19,7 @@ from typing import List
 from tqdm import tqdm
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, GATConv, Sequential
+from torch_geometric.nn import GCNConv, Sequential
 from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
@@ -31,84 +31,11 @@ from polygon_segmentation_with_gcn.src.dataset import PolygonGraphDataset
 from polygon_segmentation_with_gcn.src.data_creator import DataCreatorHelper
 
 
-class PolygonSegmenter:
-    def encode(self, data: Batch) -> torch.Tensor:
-        """_summary_
-
-        Args:
-            data (Batch): _description_
-
-        Returns:
-            torch.Tensor: _description_
-        """
-
-        encoded = self.main(data.x, data.edge_index, edge_weight=data.edge_weight)
-
-        return encoded
-
-    def decode(self, encoded: torch.Tensor, edge_label_index: torch.Tensor) -> torch.Tensor:
-        """_summary_
-
-        Args:
-            encoded (torch.Tensor): _description_
-            edge_label_index (torch.Tensor): _description_
-
-        Returns:
-            torch.Tensor: _description_
-        """
-
-        decoded = (encoded[edge_label_index[0]] * encoded[edge_label_index[1]]).sum(dim=1)
-
-        return decoded
-
-    @torch.no_grad()
-    def infer(self, data_to_infer: Batch) -> List[torch.Tensor]:
-        self.eval()
-
-        segmentation_indices = []
-
-        for di in range(len(data_to_infer)):
-            each_data = data_to_infer[di]
-
-            encoded = self.encode(each_data)
-
-            mask_to_ignore = ~torch.eye(each_data.x.shape[0], dtype=bool).to(Configuration.DEVICE)
-            mask_to_ignore[each_data.edge_index[0], each_data.edge_index[1]] = False
-            mask_to_ignore[each_data.edge_index[1], each_data.edge_index[0]] = False
-
-            connection_probability = encoded @ encoded.t()
-            connection_probability = connection_probability
-            connection_probability *= mask_to_ignore.long()
-
-            infered = (connection_probability > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
-            segmentation_indices.append(infered)
-
-        self.train()
-
-        return segmentation_indices
-
-    def forward(self, data: Batch) -> torch.Tensor:
-        # Encode the features of polygon graphs
-        encoded = self.encode(data)
-
-        # Sample negative edges
-        negative_edge_index = negative_sampling(
-            edge_index=data.edge_index,
-            num_nodes=data.num_nodes,
-            num_neg_samples=data.edge_label_index.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER,
-            method="sparse",
-        )
-
-        # Decode the encoded features of the nodes to predict whether the edges are connected
-        decoded = self.decode(encoded, edge_label_index=torch.hstack([data.edge_label_index, negative_edge_index]))
-
-        return decoded
-
-
-class PolygonSegmenterGCNConv(PolygonSegmenter, nn.Module):
+class PolygonSegmenterGCNConv(nn.Module):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
         super().__init__()
-        self.main = Sequential(
+
+        self.encoder = Sequential(
             input_args="x, edge_index, edge_weight",
             modules=[
                 (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
@@ -127,36 +54,83 @@ class PolygonSegmenterGCNConv(PolygonSegmenter, nn.Module):
             ],
         )
 
-        self.to(Configuration.DEVICE)
-
-
-class PolygonSegmenterGATConv(PolygonSegmenter, nn.Module):
-    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
-        super().__init__()
-        self.main = Sequential(
-            input_args="x, edge_index, edge_weight",
-            modules=[
-                (GATConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GATConv(hidden_channels, 128), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GATConv(128, 64), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GATConv(64, 32), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GATConv(32, 16), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                (GATConv(16, 8), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
-                nn.Linear(8, 16),
-                nn.ReLU(inplace=True),
-                nn.Linear(16, 32),
-                nn.ReLU(inplace=True),
-                nn.Linear(32, out_channels),
-            ],
+        self.decoder = nn.Sequential(
+            nn.Linear(out_channels * 2, out_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(out_channels, 1),
+            nn.Sigmoid(),
         )
 
         self.to(Configuration.DEVICE)
+
+    def encode(self, data: Batch) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            data (Batch): _description_
+
+        Returns:
+            torch.Tensor: _description_
+        """
+
+        encoded = self.encoder(data.x, data.edge_index, edge_weight=data.edge_weight)
+
+        return encoded
+
+    def decode(self, encoded: torch.Tensor, edge_label_index: torch.Tensor) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            encoded (torch.Tensor): _description_
+            edge_label_index (torch.Tensor): _description_
+
+        Returns:
+            torch.Tensor: _description_
+        """
+
+        decoded = self.decoder(torch.cat([encoded[edge_label_index[0]], encoded[edge_label_index[1]]], dim=1)).squeeze()
+
+        return decoded
+
+    @torch.no_grad()
+    def infer(self, data_to_infer: Batch) -> List[torch.Tensor]:
+        self.eval()
+
+        infered = []
+
+        for di in range(len(data_to_infer)):
+            each_data = data_to_infer[di]
+
+            encoded = self.encode(each_data)
+
+            node_pairs = torch.combinations(torch.arange(each_data.num_nodes), r=2).to(Configuration.DEVICE)
+
+            connection_probabilities = self.decode(encoded, node_pairs.t())
+
+            connected_pairs = (connection_probabilities > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
+
+            infered.append(connected_pairs)
+
+        self.train()
+
+        return infered
+
+    def forward(self, data: Batch) -> torch.Tensor:
+        # Encode the features of polygon graphs
+        encoded = self.encode(data)
+
+        # Sample negative edges
+        negative_edge_index = negative_sampling(
+            edge_index=data.edge_index,
+            num_nodes=data.num_nodes,
+            num_neg_samples=data.edge_label_index.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER,
+            method="sparse",
+        )
+
+        # Decode the encoded features of the nodes to predict whether the edges are connected
+        decoded = self.decode(encoded, edge_label_index=torch.hstack([data.edge_label_index, negative_edge_index]))
+
+        return decoded
 
 
 class PolygonSegmenterTrainer:
@@ -453,7 +427,7 @@ if __name__ == "__main__":
     Configuration.set_seed()
 
     dataset = PolygonGraphDataset()
-    model = PolygonSegmenterGATConv(
+    model = PolygonSegmenterGCNConv(
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
