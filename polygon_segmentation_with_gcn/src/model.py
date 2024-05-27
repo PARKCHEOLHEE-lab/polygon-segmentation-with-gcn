@@ -57,8 +57,11 @@ class PolygonSegmenterGCNConv(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(out_channels * 2, out_channels),
             nn.ReLU(inplace=True),
+            nn.Linear(out_channels, out_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(out_channels, out_channels),
+            nn.ReLU(inplace=True),
             nn.Linear(out_channels, 1),
-            nn.Sigmoid(),
         )
 
         self.to(Configuration.DEVICE)
@@ -107,7 +110,7 @@ class PolygonSegmenterGCNConv(nn.Module):
 
             connection_probabilities = self.decode(encoded, node_pairs.t())
 
-            connected_pairs = (connection_probabilities > Configuration.CONNECTIVITY_THRESHOLD).nonzero().t()
+            connected_pairs = node_pairs[connection_probabilities > Configuration.CONNECTIVITY_THRESHOLD].t()
 
             infered.append(connected_pairs)
 

@@ -69,12 +69,12 @@ class ModelConfiguration:
 
     DROPOUT_RATE = 0.5
     BATCH_SIZE = 128
-    HIDDEN_CHANNELS = 256
+    HIDDEN_CHANNELS = 128
     OUT_CHANNELS = 64
-    LEARNING_RATE = 0.00002
+    LEARNING_RATE = 0.00001
 
     CONNECTIVITY_THRESHOLD = 0.5
-    NEGATIVE_SAMPLE_MULTIPLIER = 2
+    NEGATIVE_SAMPLE_MULTIPLIER = 1
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
