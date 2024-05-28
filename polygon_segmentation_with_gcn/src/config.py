@@ -65,16 +65,18 @@ class DataConfiguration:
 
 
 class ModelConfiguration:
-    EPOCH = 500
+    EPOCH = 100
 
-    DROPOUT_RATE = 0.5
-    BATCH_SIZE = 128
+    BATCH_SIZE = 64
     HIDDEN_CHANNELS = 128
     OUT_CHANNELS = 64
-    LEARNING_RATE = 0.00001
+    LEARNING_RATE = 0.00002
 
     CONNECTIVITY_THRESHOLD = 0.5
     NEGATIVE_SAMPLE_MULTIPLIER = 1
+    POSITIVE_SAMPLE_MULTIPLIER = 2
+
+    TOPK_TO_INFER = 2
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
