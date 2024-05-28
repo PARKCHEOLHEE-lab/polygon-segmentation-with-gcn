@@ -25,42 +25,42 @@ from torch.optim import lr_scheduler
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from polygon_segmentation_with_gcn.src.commonutils import runtime_calculator
+from polygon_segmentation_with_gcn.src.commonutils import runtime_calculator, add_debugvisualizer
 from polygon_segmentation_with_gcn.src.config import Configuration
 from polygon_segmentation_with_gcn.src.dataset import PolygonGraphDataset
 from polygon_segmentation_with_gcn.src.data_creator import DataCreatorHelper
 
 
 class PolygonSegmenterGCNConv(nn.Module):
-    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, activation_function: nn.Module):
         super().__init__()
 
         self.encoder = Sequential(
             input_args="x, edge_index, edge_weight",
             modules=[
                 (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
+                activation_function,
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
+                activation_function,
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
+                activation_function,
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
+                activation_function,
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
+                activation_function,
                 (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                nn.ReLU(inplace=True),
+                activation_function,
                 (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
             ],
         )
 
         self.decoder = nn.Sequential(
             nn.Linear(out_channels * 2, out_channels),
-            nn.ReLU(inplace=True),
+            activation_function,
             nn.Linear(out_channels, out_channels),
-            nn.ReLU(inplace=True),
+            activation_function,
             nn.Linear(out_channels, out_channels),
-            nn.ReLU(inplace=True),
+            activation_function,
             nn.Linear(out_channels, 1),
         )
 
@@ -95,6 +95,23 @@ class PolygonSegmenterGCNConv(nn.Module):
 
         return decoded
 
+    def forward(self, data: Batch) -> torch.Tensor:
+        # Encode the features of polygon graphs
+        encoded = self.encode(data)
+
+        # Sample negative edges
+        negative_edge_index = negative_sampling(
+            edge_index=data.edge_index,
+            num_nodes=data.num_nodes,
+            num_neg_samples=int(data.edge_label_index_only.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER),
+            method="sparse",
+        )
+
+        # Decode the encoded features of the nodes to predict whether the edges are connected
+        decoded = self.decode(encoded, edge_label_index=torch.hstack([data.edge_label_index_only, negative_edge_index]))
+
+        return decoded
+
     @torch.no_grad()
     def infer(self, data_to_infer: Batch) -> List[torch.Tensor]:
         self.eval()
@@ -108,39 +125,40 @@ class PolygonSegmenterGCNConv(nn.Module):
 
             node_pairs = torch.combinations(torch.arange(each_data.num_nodes), r=2).to(Configuration.DEVICE)
 
-            connection_probabilities = self.decode(encoded, node_pairs.t())
+            connection_probabilities = self.decode(encoded, node_pairs.t()).sigmoid()
 
-            connected_pairs = node_pairs[connection_probabilities > Configuration.CONNECTIVITY_THRESHOLD].t()
+            topk_indices = torch.topk(connection_probabilities, k=Configuration.TOPK_TO_INFER).indices
 
-            infered.append(connected_pairs)
+            connected_pairs = node_pairs[topk_indices]
+
+            filtered_pairs = [[], []]
+            for pair in connected_pairs:
+                if pair.tolist() in each_data.edge_index.t().tolist():
+                    continue
+                elif pair.tolist()[::-1] in each_data.edge_index.t().tolist():
+                    continue
+
+                filtered_pairs[0].append(pair[0].item())
+                filtered_pairs[1].append(pair[1].item())
+
+            infered.append(torch.tensor(filtered_pairs).to(Configuration.DEVICE))
 
         self.train()
 
         return infered
 
-    def forward(self, data: Batch) -> torch.Tensor:
-        # Encode the features of polygon graphs
-        encoded = self.encode(data)
-
-        # Sample negative edges
-        negative_edge_index = negative_sampling(
-            edge_index=data.edge_index,
-            num_nodes=data.num_nodes,
-            num_neg_samples=data.edge_label_index.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER,
-            method="sparse",
-        )
-
-        # Decode the encoded features of the nodes to predict whether the edges are connected
-        decoded = self.decode(encoded, edge_label_index=torch.hstack([data.edge_label_index, negative_edge_index]))
-
-        return decoded
-
 
 class PolygonSegmenterTrainer:
-    def __init__(self, dataset: PolygonGraphDataset, model: nn.Module, pre_trained_path: str = None):
+    def __init__(
+        self, dataset: PolygonGraphDataset, model: nn.Module, pre_trained_path: str = None, is_debug_mode: bool = False
+    ):
         self.dataset = dataset
         self.model = model
         self.pre_trained_path = pre_trained_path
+        self.is_debug_mode = is_debug_mode
+
+        if self.is_debug_mode:
+            add_debugvisualizer(globals())
 
         self._set_summary_writer()
         self._set_loss_function()
@@ -178,6 +196,14 @@ class PolygonSegmenterTrainer:
     def _set_lr_scheduler(self):
         self.lr_scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=5, verbose=True, factor=0.1)
 
+    def _get_labels(self, data: Batch) -> torch.Tensor:
+        ones = torch.ones(data.edge_label_index_only.shape[1])
+        zeros = torch.tensor([0] * int(data.edge_label_index_only.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER))
+
+        labels = torch.hstack([ones, zeros]).to(Configuration.DEVICE)
+
+        return labels
+
     @runtime_calculator
     def _train_each_epoch(
         self,
@@ -204,12 +230,8 @@ class PolygonSegmenterTrainer:
         for data_to_train in tqdm(dataset.train_dataloader, desc=f"Training... epoch: {epoch}/{Configuration.EPOCH}"):
             train_decoded = model(data_to_train)
 
-            train_labels = torch.hstack(
-                [
-                    data_to_train.edge_label,
-                    torch.zeros_like(data_to_train.edge_label.repeat(Configuration.NEGATIVE_SAMPLE_MULTIPLIER)),
-                ]
-            )
+            train_labels = self._get_labels(data_to_train)
+
             train_loss = loss_function(train_decoded, train_labels)
 
             train_losses.append(train_loss.item())
@@ -232,12 +254,8 @@ class PolygonSegmenterTrainer:
         ):
             validation_decoded = model(data_to_validate)
 
-            validation_labels = torch.hstack(
-                [
-                    data_to_validate.edge_label,
-                    torch.zeros_like(data_to_validate.edge_label.repeat(Configuration.NEGATIVE_SAMPLE_MULTIPLIER)),
-                ]
-            )
+            validation_labels = self._get_labels(data_to_validate)
+
             validation_loss = loss_function(validation_decoded, validation_labels)
 
             validation_losses.append(validation_loss.item())
@@ -254,43 +272,50 @@ class PolygonSegmenterTrainer:
 
         for si in range(len(indices)):
             each_data = batch[si]
-            each_irregular_segmentation_indices = indices[si]
+            each_segmentation_indices = indices[si]
 
             polygon = geometry.Polygon(each_data.x[:, :2].detach().cpu().numpy())
             predicted_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                polygon, each_irregular_segmentation_indices
+                polygon, each_segmentation_indices.detach().cpu().numpy()
             )
+
+            predicted_edges_zip = list(zip(predicted_edges, each_segmentation_indices.detach().cpu().numpy().T))
+
             label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-                polygon, each_data.edge_label_index_only
+                polygon, each_data.edge_label_index_only.T.unique(dim=0).detach().cpu().numpy().T
             )
 
             figure = plt.figure(figsize=figsize, dpi=dpi)
             ax = figure.add_subplot(1, 1, 1)
             ax.axis("equal")
 
+            added_ground_truth_label = False
+            for label_edge in label_edges:
+                if added_ground_truth_label:
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, alpha=0.3)
+                else:
+                    added_ground_truth_label = True
+                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, alpha=0.3, label="ground truth")
+
             added_predicted_label = False
-            for predicted_edge in predicted_edges:
+            for predicted_edge, predicted_index in predicted_edges_zip:
                 if added_predicted_label:
-                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0, alpha=0.5)
+                    ax.plot(*predicted_edge.coords.xy, color="green", linewidth=1.0)
                 else:
                     added_predicted_label = True
                     ax.plot(
                         *predicted_edge.coords.xy,
                         color="green",
                         linewidth=1.0,
-                        alpha=0.5,
                         label="predicted",
                     )
 
-            added_ground_truth_label = False
-            for label_edge in label_edges:
-                if added_ground_truth_label:
-                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0)
-                else:
-                    added_ground_truth_label = True
-                    ax.plot(*label_edge.coords.xy, color="blue", linewidth=1.0, label="ground truth")
+                if predicted_index.tolist() in each_data.edge_label_index_only.T.tolist():
+                    ax.plot(*predicted_edge.coords.xy, color="yellow", linewidth=1.0)
+                elif predicted_index.tolist()[::-1] in each_data.edge_label_index_only.T.tolist():
+                    ax.plot(*predicted_edge.coords.xy, color="yellow", linewidth=1.0)
 
-            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, label="polygon")
+            ax.plot(*polygon.exterior.coords.xy, color="black", linewidth=0.6, alpha=0.3, label="polygon")
             ax.fill(*polygon.exterior.coords.xy, alpha=0.1, color="black")
 
             x, y = polygon.exterior.coords.xy
@@ -333,29 +358,55 @@ class PolygonSegmenterTrainer:
             model (nn.Module): _description_
         """
 
-        irregular_indices_to_viz = torch.randperm(len(dataset.train_dataset.datasets[1]))[:viz_count]
-        irregular_subset = Subset(dataset.train_dataset.datasets[1], irregular_indices_to_viz)
-        irregular_sampled = DataLoader(irregular_subset, batch_size=viz_count)
+        irregular_train_indices_to_viz = torch.randperm(len(dataset.train_dataset.datasets[1]))[:viz_count]
+        irregular_train_subset = Subset(dataset.train_dataset.datasets[1], irregular_train_indices_to_viz)
+        irregular_train_sampled = DataLoader(irregular_train_subset, batch_size=viz_count)
 
-        regular_indices_to_viz = torch.randperm(len(dataset.train_dataset.datasets[0]))[:viz_count]
-        regular_subset = Subset(dataset.train_dataset.datasets[0], regular_indices_to_viz)
-        regular_sampled = DataLoader(regular_subset, batch_size=viz_count)
+        regular_train_indices_to_viz = torch.randperm(len(dataset.train_dataset.datasets[0]))[:viz_count]
+        regular_train_subset = Subset(dataset.train_dataset.datasets[0], regular_train_indices_to_viz)
+        regular_train_sampled = DataLoader(regular_train_subset, batch_size=viz_count)
 
-        irregular_batch = [data_to_infer for data_to_infer in irregular_sampled][0]
-        regular_batch = [data_to_infer for data_to_infer in regular_sampled][0]
+        irregular_train_batch = [data_to_infer for data_to_infer in irregular_train_sampled][0]
+        regular_train_batch = [data_to_infer for data_to_infer in regular_train_sampled][0]
 
-        irregular_segmentation_indices = model.infer(irregular_batch)
-        regular_segmentation_indices = model.infer(regular_batch)
+        irregular_train_segmentation_indices = model.infer(irregular_train_batch)
+        regular_train_segmentation_indices = model.infer(regular_train_batch)
+
+        figures = []
+
+        figures += self._get_figures_to_evaluate_qualitatively(
+            irregular_train_batch, irregular_train_segmentation_indices
+        )
+        figures += self._get_figures_to_evaluate_qualitatively(regular_train_batch, regular_train_segmentation_indices)
+
+        irregular_validation_indices_to_viz = torch.randperm(len(dataset.validation_dataset.datasets[1]))[:viz_count]
+        irregular_validation_subset = Subset(
+            dataset.validation_dataset.datasets[1], irregular_validation_indices_to_viz
+        )
+        irregular_validation_sampled = DataLoader(irregular_validation_subset, batch_size=viz_count)
+
+        regular_validation_indices_to_viz = torch.randperm(len(dataset.validation_dataset.datasets[0]))[:viz_count]
+        regular_validation_subset = Subset(dataset.validation_dataset.datasets[0], regular_validation_indices_to_viz)
+        regular_validation_sampled = DataLoader(regular_validation_subset, batch_size=viz_count)
+
+        irregular_validation_batch = [data_to_infer for data_to_infer in irregular_validation_sampled][0]
+        regular_validation_batch = [data_to_infer for data_to_infer in regular_validation_sampled][0]
+
+        irregular_validation_segmentation_indices = model.infer(irregular_validation_batch)
+        regular_validation_segmentation_indices = model.infer(regular_validation_batch)
+
+        figures += self._get_figures_to_evaluate_qualitatively(
+            irregular_validation_batch, irregular_validation_segmentation_indices
+        )
+        figures += self._get_figures_to_evaluate_qualitatively(
+            regular_validation_batch, regular_validation_segmentation_indices
+        )
 
         dpi = 100
         figsize = (5, 5)
 
-        figures = []
-        figures += self._get_figures_to_evaluate_qualitatively(irregular_batch, irregular_segmentation_indices)
-        figures += self._get_figures_to_evaluate_qualitatively(regular_batch, regular_segmentation_indices)
-
         col_num = 5
-        row_num = int(np.ceil((viz_count * 2) / col_num))
+        row_num = int(np.ceil((viz_count * 4) / col_num))
         img_size = figsize[0] * dpi
         merged_image = Image.new("RGB", (col_num * img_size, row_num * img_size), "white")
 
@@ -425,8 +476,6 @@ class PolygonSegmenterTrainer:
 
 
 if __name__ == "__main__":
-    # from debugvisualizer.debugvisualizer import Plotter
-
     Configuration.set_seed()
 
     dataset = PolygonGraphDataset()
@@ -434,7 +483,8 @@ if __name__ == "__main__":
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
+        activation_function=nn.PReLU().to(Configuration.DEVICE),
     )
 
-    polygon_segmenter_trainer = PolygonSegmenterTrainer(dataset=dataset, model=model)
+    polygon_segmenter_trainer = PolygonSegmenterTrainer(dataset=dataset, model=model, is_debug_mode=True)
     polygon_segmenter_trainer.train()
