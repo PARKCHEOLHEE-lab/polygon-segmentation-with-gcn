@@ -631,9 +631,10 @@ class DataCreatorHelper:
         Returns:
             List[LineString]: connected segments
         """
-
         if len(edge_indices) == 0:
             return []
+
+        assert edge_indices.shape[0] == 2
 
         exterior_coordinates = polygon.exterior.coords[:-1]
 
