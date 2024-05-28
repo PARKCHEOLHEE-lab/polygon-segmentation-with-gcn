@@ -8,6 +8,7 @@ if os.path.abspath(os.path.join(__file__, "../../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(__file__, "../../../")))
 
 import torch
+import numpy as np
 
 from typing import Tuple, List
 from torch.utils.data import ConcatDataset, random_split
@@ -30,6 +31,29 @@ class DatasetHelper:
             each_data.edge_index = torch.tensor(each_data.edge_index).to(Configuration.DEVICE)
             each_data.edge_label_index = torch.tensor(each_data.edge_label_index).to(Configuration.DEVICE)
             each_data.edge_label = torch.ones([each_data.edge_label_index.shape[1]]).to(Configuration.DEVICE)
+
+            # Dummy label
+            if None in each_data.edge_label_index_only.flatten():
+                edge_label_index_only = np.array([[0, 1], [1, 2]])
+                edge_label_index_only = np.repeat(
+                    edge_label_index_only, each_data.num_nodes * Configuration.POSITIVE_SAMPLE_MULTIPLIER, axis=1
+                )
+
+            else:
+                edge_label_index_only = each_data.edge_label_index_only
+                if edge_label_index_only.shape[1] == 1:
+                    edge_label_index_only = edge_label_index_only.repeat(2, axis=1)
+
+                edge_label_index_only = np.repeat(
+                    edge_label_index_only, each_data.num_nodes * Configuration.POSITIVE_SAMPLE_MULTIPLIER, axis=1
+                )
+
+            assert edge_label_index_only.shape == (
+                2,
+                each_data.num_nodes * Configuration.POSITIVE_SAMPLE_MULTIPLIER * 2,
+            )
+
+            each_data.edge_label_index_only = torch.tensor(edge_label_index_only).to(Configuration.DEVICE)
 
 
 class RegularPolygonDataset(Dataset, DatasetHelper):
