@@ -65,8 +65,9 @@ class DataConfiguration:
 
 
 class ModelConfiguration:
-    EPOCH = 100
+    EPOCH = 500
 
+    DROPOUT_RATE = 0.5
     BATCH_SIZE = 64
     HIDDEN_CHANNELS = 128
     OUT_CHANNELS = 64
@@ -77,6 +78,9 @@ class ModelConfiguration:
     POSITIVE_SAMPLE_MULTIPLIER = 2
 
     TOPK_TO_INFER = 2
+
+    NUM_ENCODER_LAYERS = 7
+    NUM_DECODER_LAYERS = 4
 
 
 class Configuration(DataConfiguration, ModelConfiguration):

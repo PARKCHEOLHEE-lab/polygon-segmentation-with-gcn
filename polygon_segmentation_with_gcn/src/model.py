@@ -35,34 +35,51 @@ class PolygonSegmenterGCNConv(nn.Module):
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int, activation_function: nn.Module):
         super().__init__()
 
-        self.encoder = Sequential(
-            input_args="x, edge_index, edge_weight",
-            modules=[
-                (GCNConv(in_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
+        input_args = "x, edge_index, edge_weight"
+
+        encoder_modules = []
+        encoder_modules.extend(
+            [
+                (GCNConv(in_channels, hidden_channels), f"{input_args} -> x"),
+                nn.BatchNorm1d(hidden_channels),
                 activation_function,
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                activation_function,
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                activation_function,
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                activation_function,
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                activation_function,
-                (GCNConv(hidden_channels, hidden_channels), "x, edge_index, edge_weight -> x"),
-                activation_function,
-                (GCNConv(hidden_channels, out_channels), "x, edge_index, edge_weight -> x"),
-            ],
+                nn.Dropout(Configuration.DROPOUT_RATE),
+            ]
         )
 
-        self.decoder = nn.Sequential(
-            nn.Linear(out_channels * 2, out_channels),
-            activation_function,
-            nn.Linear(out_channels, out_channels),
-            activation_function,
-            nn.Linear(out_channels, out_channels),
-            activation_function,
-            nn.Linear(out_channels, 1),
+        for _ in range(Configuration.NUM_ENCODER_LAYERS - 2):
+            encoder_modules.extend(
+                [
+                    (GCNConv(hidden_channels, hidden_channels), f"{input_args} -> x"),
+                    nn.BatchNorm1d(hidden_channels),
+                    activation_function,
+                    nn.Dropout(Configuration.DROPOUT_RATE),
+                ]
+            )
+
+        encoder_modules.append((GCNConv(hidden_channels, out_channels), f"{input_args} -> x"))
+
+        self.encoder = Sequential(input_args=input_args, modules=encoder_modules)
+
+        decoder_modules = []
+        decoder_modules.extend(
+            [
+                nn.Linear(out_channels * 2, out_channels),
+                activation_function,
+            ]
         )
+
+        for _ in range(Configuration.NUM_DECODER_LAYERS - 2):
+            decoder_modules.extend(
+                [
+                    nn.Linear(out_channels, out_channels),
+                    activation_function,
+                ]
+            )
+
+        decoder_modules.append(nn.Linear(out_channels, 1))
+
+        self.decoder = nn.Sequential(*decoder_modules)
 
         self.to(Configuration.DEVICE)
 
@@ -486,5 +503,7 @@ if __name__ == "__main__":
         activation_function=nn.PReLU().to(Configuration.DEVICE),
     )
 
-    polygon_segmenter_trainer = PolygonSegmenterTrainer(dataset=dataset, model=model, is_debug_mode=True)
+    polygon_segmenter_trainer = PolygonSegmenterTrainer(
+        dataset=dataset, model=model, is_debug_mode=True, pre_trained_path=None
+    )
     polygon_segmenter_trainer.train()
