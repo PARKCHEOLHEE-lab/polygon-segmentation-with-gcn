@@ -77,7 +77,12 @@ class PolygonSegmenterGCNConv(nn.Module):
                 ]
             )
 
-        decoder_modules.append(nn.Linear(out_channels, 1))
+        decoder_modules.extend(
+            [
+                nn.Linear(out_channels, 1),
+                nn.Sigmoid(),
+            ]
+        )
 
         self.decoder = nn.Sequential(*decoder_modules)
 
@@ -125,7 +130,7 @@ class PolygonSegmenterGCNConv(nn.Module):
         )
 
         # Decode the encoded features of the nodes to predict whether the edges are connected
-        decoded = self.decode(encoded, edge_label_index=torch.hstack([data.edge_label_index_only, negative_edge_index]))
+        decoded = self.decode(encoded, torch.hstack([data.edge_label_index_only, negative_edge_index]).int())
 
         return decoded
 
@@ -142,17 +147,51 @@ class PolygonSegmenterGCNConv(nn.Module):
 
             node_pairs = torch.combinations(torch.arange(each_data.num_nodes), r=2).to(Configuration.DEVICE)
 
-            connection_probabilities = self.decode(encoded, node_pairs.t()).sigmoid()
+            node_pairs_filtered = [[], []]
+            for node_pair in node_pairs:
+                if node_pair.tolist() in each_data.edge_index.t().tolist():
+                    continue
+                elif node_pair.tolist()[::-1] in each_data.edge_index.t().tolist():
+                    continue
+
+                node_pairs_filtered[0].append(node_pair[0].item())
+                node_pairs_filtered[1].append(node_pair[1].item())
+
+            node_pairs = torch.tensor(node_pairs_filtered).to(Configuration.DEVICE)
+
+            connection_probabilities = self.decode(encoded, node_pairs)
+            connection_probabilities = torch.where(
+                connection_probabilities < Configuration.CONNECTIVITY_THRESHOLD,
+                torch.zeros_like(connection_probabilities),
+                connection_probabilities,
+            )
 
             topk_indices = torch.topk(connection_probabilities, k=Configuration.TOPK_TO_INFER).indices
 
-            connected_pairs = node_pairs[topk_indices]
+            connected_pairs = node_pairs.t()[topk_indices]
+
+            each_polygon = geometry.Polygon(each_data.x[:, :2].tolist())
 
             filtered_pairs = [[], []]
             for pair in connected_pairs:
+                if bool(node_pair[0] == node_pair[1]):
+                    continue
                 if pair.tolist() in each_data.edge_index.t().tolist():
                     continue
                 elif pair.tolist()[::-1] in each_data.edge_index.t().tolist():
+                    continue
+
+                segment, *_ = DataCreatorHelper.connect_polygon_segments_by_indices(
+                    each_polygon, pair.unsqueeze(1).detach().cpu().numpy()
+                )
+
+                reduced_segment = DataCreatorHelper.extend_linestring(
+                    segment, -Configuration.LINESTRING_REDUCTION_LENGTH, -Configuration.LINESTRING_REDUCTION_LENGTH
+                )
+
+                if not reduced_segment.within(each_polygon):
+                    continue
+                if reduced_segment.within(each_polygon.exterior.buffer(Configuration.POLYGON_EXTERIOR_BUFFER_DISTANCE)):
                     continue
 
                 filtered_pairs[0].append(pair[0].item())
@@ -205,7 +244,7 @@ class PolygonSegmenterTrainer:
             print(f"Load pre-trained states from {self.states_path} \n")
 
     def _set_loss_function(self):
-        self.loss_function = nn.BCEWithLogitsLoss()
+        self.loss_function = nn.BCELoss()
 
     def _set_optimizer(self):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=Configuration.LEARNING_RATE)
