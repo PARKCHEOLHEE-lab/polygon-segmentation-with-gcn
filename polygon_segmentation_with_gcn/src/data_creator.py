@@ -99,7 +99,7 @@ class DataCreatorHelper:
 
         extended_linestring = LineString([a_extended, b_extended])
 
-        assert np.isclose(extended_linestring.length, linestring.length + start + end), "Extension failed."
+        assert np.isclose(extended_linestring.length, abs(linestring.length + start + end)), "Extension failed."
 
         return extended_linestring
 
