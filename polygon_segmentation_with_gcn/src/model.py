@@ -684,6 +684,6 @@ if __name__ == "__main__":
         model=model,
         is_debug_mode=True,
         pre_trained_path=None,
-        compute_geometric_loss=False,
+        use_geometric_loss=False,
     )
     polygon_segmenter_trainer.train()
