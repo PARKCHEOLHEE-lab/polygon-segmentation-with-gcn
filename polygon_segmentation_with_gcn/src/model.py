@@ -330,6 +330,9 @@ class PolygonSegmenterTrainer:
 
         self.summary_writer = SummaryWriter(log_dir=self.log_dir)
 
+        for key, value in Configuration():
+            self.summary_writer.add_text(key, str(value))
+
         self.states_dir = os.path.join(self.log_dir, "states")
         os.makedirs(self.states_dir, exist_ok=True)
 
