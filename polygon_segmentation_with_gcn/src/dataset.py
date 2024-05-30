@@ -23,14 +23,19 @@ class DatasetHelper:
         pass
 
     def _convert_to_torch_tensor(self, data: List[Data]):
-        # Remove area features and convert numpy array to torch tensor
-        for each_data in data:
+        edi = 0
+        while edi < len(data):
+            each_data = data[edi]
             each_data.x = each_data.x[:, :-1]
             each_data.x = torch.tensor(each_data.x, dtype=torch.float32).to(Configuration.DEVICE)
             each_data.edge_weight = torch.tensor(each_data.edge_weight, dtype=torch.float32).to(Configuration.DEVICE)
             each_data.edge_index = torch.tensor(each_data.edge_index).to(Configuration.DEVICE)
             each_data.edge_label_index = torch.tensor(each_data.edge_label_index).to(Configuration.DEVICE)
             each_data.edge_label = torch.ones([each_data.edge_label_index.shape[1]]).to(Configuration.DEVICE)
+
+            if all(each_data.x[:, :2][-1] == each_data.x[:, :2][-2]):
+                del data[edi]
+                continue
 
             # Dummy label
             if None in each_data.edge_label_index_only.flatten():
@@ -42,7 +47,7 @@ class DatasetHelper:
             else:
                 edge_label_index_only = each_data.edge_label_index_only
                 if edge_label_index_only.shape[1] == 1:
-                    edge_label_index_only = edge_label_index_only.repeat(2, axis=1)
+                    edge_label_index_only = np.hstack([edge_label_index_only, np.array([[0], [1]])])
 
                 edge_label_index_only = np.repeat(
                     edge_label_index_only, each_data.num_nodes * Configuration.POSITIVE_SAMPLE_MULTIPLIER, axis=1
@@ -54,6 +59,8 @@ class DatasetHelper:
             )
 
             each_data.edge_label_index_only = torch.tensor(edge_label_index_only).to(Configuration.DEVICE)
+
+            edi += 1
 
 
 class RegularPolygonDataset(Dataset, DatasetHelper):
@@ -137,18 +144,21 @@ class PolygonGraphDataset(Dataset):
             train_dataset,
             batch_size=Configuration.BATCH_SIZE,
             shuffle=True,
+            drop_last=True,
         )
 
         validation_dataloader = DataLoader(
             validation_dataset,
             batch_size=Configuration.BATCH_SIZE,
             shuffle=True,
+            drop_last=True,
         )
 
         test_dataloader = DataLoader(
             test_dataset,
             batch_size=Configuration.BATCH_SIZE,
             shuffle=True,
+            drop_last=True,
         )
 
         return (
