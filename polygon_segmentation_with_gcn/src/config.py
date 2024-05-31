@@ -95,6 +95,8 @@ class ModelConfiguration:
     SAGECONV = "SAGEConv"
     GATCONV = "GATConv"
 
+    INPUT_ARGS = "x, edge_index, edge_weight"
+
 
 class Configuration(DataConfiguration, ModelConfiguration):
     def __iter__(self):

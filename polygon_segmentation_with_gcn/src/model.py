@@ -123,61 +123,45 @@ class PolygonSegmenter(nn.Module):
         else:
             raise ValueError(f"Invalid conv_type: {conv_type}")
 
-        input_args = "x, edge_index, edge_weight"
-
         encoder_modules = []
-        encoder_modules.extend(
-            [
-                (conv(in_channels, hidden_channels), f"{input_args} -> x"),
-                nn.BatchNorm1d(hidden_channels),
-                encoder_activation,
-                nn.Dropout(Configuration.DROPOUT_RATE),
-            ]
-        )
+        encoder_modules += [
+            (conv(in_channels, hidden_channels), f"{Configuration.INPUT_ARGS} -> x"),
+            nn.BatchNorm1d(hidden_channels),
+            encoder_activation,
+            nn.Dropout(Configuration.DROPOUT_RATE),
+        ]
 
-        for _ in range(Configuration.NUM_ENCODER_LAYERS - 2):
-            encoder_modules.extend(
-                [
-                    (conv(hidden_channels, hidden_channels), f"{input_args} -> x"),
-                    nn.BatchNorm1d(hidden_channels),
-                    encoder_activation,
-                    nn.Dropout(Configuration.DROPOUT_RATE),
-                ]
-            )
+        encoder_modules += [
+            (conv(hidden_channels, hidden_channels), f"{Configuration.INPUT_ARGS} -> x"),
+            nn.BatchNorm1d(hidden_channels),
+            encoder_activation,
+            nn.Dropout(Configuration.DROPOUT_RATE),
+        ] * (Configuration.NUM_ENCODER_LAYERS - 2)
 
-        encoder_modules.append((conv(hidden_channels, out_channels), f"{input_args} -> x"))
-
-        self.encoder = Sequential(input_args=input_args, modules=encoder_modules)
+        encoder_modules += [(conv(hidden_channels, out_channels), f"{Configuration.INPUT_ARGS} -> x")]
 
         decoder_in_channels = out_channels * 2
         if use_skip_connection:
             decoder_in_channels += in_channels * 2
 
         decoder_modules = []
-        decoder_modules.extend(
-            [
-                nn.Linear(decoder_in_channels, out_channels),
-                decoder_activation,
-            ]
-        )
+        decoder_modules += [
+            nn.Linear(decoder_in_channels, out_channels),
+            decoder_activation,
+        ]
 
-        for _ in range(Configuration.NUM_DECODER_LAYERS - 2):
-            decoder_modules.extend(
-                [
-                    nn.Linear(out_channels, out_channels),
-                    decoder_activation,
-                ]
-            )
+        decoder_modules += [
+            nn.Linear(out_channels, out_channels),
+            decoder_activation,
+        ] * (Configuration.NUM_DECODER_LAYERS - 2)
 
-        decoder_modules.extend(
-            [
-                nn.Linear(out_channels, 1),
-                nn.Sigmoid(),
-            ]
-        )
+        decoder_modules += [
+            nn.Linear(out_channels, 1),
+            nn.Sigmoid(),
+        ]
 
+        self.encoder = Sequential(input_args=Configuration.INPUT_ARGS, modules=encoder_modules)
         self.decoder = nn.Sequential(*decoder_modules)
-
         self.use_skip_connection = use_skip_connection
 
         self.to(Configuration.DEVICE)
@@ -196,7 +180,7 @@ class PolygonSegmenter(nn.Module):
 
         return encoded
 
-    def decode(self, encoded: torch.Tensor, edge_label_index: torch.Tensor) -> torch.Tensor:
+    def decode(self, data: Batch, encoded: torch.Tensor, edge_label_index: torch.Tensor) -> torch.Tensor:
         """_summary_
 
         Args:
@@ -206,6 +190,10 @@ class PolygonSegmenter(nn.Module):
         Returns:
             torch.Tensor: _description_
         """
+
+        # Merge raw features and encoded features to inject geometric informations
+        if self.use_skip_connection:
+            encoded = torch.cat([data.x, encoded], dim=1)
 
         decoded = self.decoder(torch.cat([encoded[edge_label_index[0]], encoded[edge_label_index[1]]], dim=1)).squeeze()
 
@@ -223,12 +211,8 @@ class PolygonSegmenter(nn.Module):
             method="sparse",
         )
 
-        # Merge raw features and encoded features to inject geometric informations
-        if self.use_skip_connection:
-            encoded = torch.cat([data.x, encoded], dim=1)
-
         # Decode the encoded features of the nodes to predict whether the edges are connected
-        decoded = self.decode(encoded, torch.hstack([data.edge_label_index_only, negative_edge_index]).int())
+        decoded = self.decode(data, encoded, torch.hstack([data.edge_label_index_only, negative_edge_index]).int())
 
         return decoded
 
@@ -261,7 +245,7 @@ class PolygonSegmenter(nn.Module):
             else:
                 node_pairs = node_pairs.t()
 
-            connection_probabilities = self.decode(encoded, node_pairs)
+            connection_probabilities = self.decode(each_data, encoded, node_pairs)
             connection_probabilities = torch.where(
                 connection_probabilities < Configuration.CONNECTION_THRESHOLD,
                 torch.zeros_like(connection_probabilities),
