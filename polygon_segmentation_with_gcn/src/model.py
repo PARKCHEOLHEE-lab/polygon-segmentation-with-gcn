@@ -101,7 +101,14 @@ class GeometricLoss(nn.Module):
 
 class PolygonSegmenter(nn.Module):
     def __init__(
-        self, conv_type: str, in_channels: int, hidden_channels: int, out_channels: int, activation_function: nn.Module
+        self,
+        conv_type: str,
+        in_channels: int,
+        hidden_channels: int,
+        out_channels: int,
+        encoder_activation: nn.Module,
+        decoder_activation: nn.Module,
+        use_skip_connection: bool = True,
     ):
         super().__init__()
 
@@ -123,7 +130,7 @@ class PolygonSegmenter(nn.Module):
             [
                 (conv(in_channels, hidden_channels), f"{input_args} -> x"),
                 nn.BatchNorm1d(hidden_channels),
-                activation_function,
+                encoder_activation,
                 nn.Dropout(Configuration.DROPOUT_RATE),
             ]
         )
@@ -133,7 +140,7 @@ class PolygonSegmenter(nn.Module):
                 [
                     (conv(hidden_channels, hidden_channels), f"{input_args} -> x"),
                     nn.BatchNorm1d(hidden_channels),
-                    activation_function,
+                    encoder_activation,
                     nn.Dropout(Configuration.DROPOUT_RATE),
                 ]
             )
@@ -142,11 +149,15 @@ class PolygonSegmenter(nn.Module):
 
         self.encoder = Sequential(input_args=input_args, modules=encoder_modules)
 
+        decoder_in_channels = out_channels * 2
+        if use_skip_connection:
+            decoder_in_channels += in_channels * 2
+
         decoder_modules = []
         decoder_modules.extend(
             [
-                nn.Linear(out_channels * 2, out_channels),
-                activation_function,
+                nn.Linear(decoder_in_channels, out_channels),
+                decoder_activation,
             ]
         )
 
@@ -154,7 +165,7 @@ class PolygonSegmenter(nn.Module):
             decoder_modules.extend(
                 [
                     nn.Linear(out_channels, out_channels),
-                    activation_function,
+                    decoder_activation,
                 ]
             )
 
@@ -166,6 +177,8 @@ class PolygonSegmenter(nn.Module):
         )
 
         self.decoder = nn.Sequential(*decoder_modules)
+
+        self.use_skip_connection = use_skip_connection
 
         self.to(Configuration.DEVICE)
 
@@ -209,6 +222,10 @@ class PolygonSegmenter(nn.Module):
             num_neg_samples=int(data.edge_label_index_only.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER),
             method="sparse",
         )
+
+        # Merge raw features and encoded features to inject geometric informations
+        if self.use_skip_connection:
+            encoded = torch.cat([data.x, encoded], dim=1)
 
         # Decode the encoded features of the nodes to predict whether the edges are connected
         decoded = self.decode(encoded, torch.hstack([data.edge_label_index_only, negative_edge_index]).int())
@@ -679,7 +696,9 @@ if __name__ == "__main__":
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
-        activation_function=nn.ReLU().to(Configuration.DEVICE),
+        encoder_activation=nn.ReLU().to(Configuration.DEVICE),
+        decoder_activation=nn.ReLU().to(Configuration.DEVICE),
+        use_skip_connection=True,
     )
 
     polygon_segmenter_trainer = PolygonSegmenterTrainer(
