@@ -22,7 +22,7 @@ class DatasetHelper:
     def __init__(self):
         pass
 
-    def _convert_to_torch_tensor(self, data: List[Data]):
+    def _tidy_all_data(self, data: List[Data]):
         edi = 0
         while edi < len(data):
             each_data = data[edi]
@@ -71,7 +71,7 @@ class RegularPolygonDataset(Dataset, DatasetHelper):
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_REGULAR_PT in file:
                 data = torch.load(os.path.join(data_path, file))
-                self._convert_to_torch_tensor(data)
+                self._tidy_all_data(data)
 
                 self.regular_polygons.extend(data)
 
@@ -90,7 +90,7 @@ class IrregularPolygonDataset(Dataset, DatasetHelper):
         for file in os.listdir(data_path):
             if Configuration.LANDS_DATA_IRREGULAR_PT in file:
                 data = torch.load(os.path.join(data_path, file))
-                self._convert_to_torch_tensor(data)
+                self._tidy_all_data(data)
 
                 self.irregular_polygons.extend(data)
 
