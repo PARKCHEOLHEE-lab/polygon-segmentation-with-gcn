@@ -397,10 +397,9 @@ class PolygonSegmenterTrainer:
 
             train_loss = loss_function(train_decoded, train_labels)
 
-            train_infered = model.infer(data_to_train, use_filtering=False)
-
             train_geometric_loss = 0
             if use_geometric_loss:
+                train_infered = model.infer(data_to_train, use_filtering=False)
                 train_geometric_loss = geometric_loss_function(data_to_train, train_infered).item()
 
             train_losses.append(train_loss.item() + train_geometric_loss)
@@ -433,10 +432,9 @@ class PolygonSegmenterTrainer:
 
             validation_loss = loss_function(validation_decoded, validation_labels)
 
-            validation_infered = model.infer(data_to_validate, use_filtering=False)
-
             validation_geometric_loss = 0
             if use_geometric_loss:
+                validation_infered = model.infer(data_to_validate, use_filtering=False)
                 validation_geometric_loss = geometric_loss_function(data_to_validate, validation_infered).item()
 
             validation_losses.append(validation_loss.item() + validation_geometric_loss)
