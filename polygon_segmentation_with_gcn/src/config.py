@@ -67,7 +67,8 @@ class DataConfiguration:
 class ModelConfiguration:
     EPOCH = 100
 
-    DROPOUT_RATE = 0.1
+    DECODER_DROPOUT_RATE = 0.1
+    ENCODER_DROPOUT_RATE = 0.3
     BATCH_SIZE = 128
     HIDDEN_CHANNELS = 128
     OUT_CHANNELS = 64

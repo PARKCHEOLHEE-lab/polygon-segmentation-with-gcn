@@ -128,14 +128,14 @@ class PolygonSegmenter(nn.Module):
             (conv(in_channels, hidden_channels), f"{Configuration.INPUT_ARGS} -> x"),
             nn.BatchNorm1d(hidden_channels),
             encoder_activation,
-            nn.Dropout(Configuration.DROPOUT_RATE),
+            nn.Dropout(Configuration.DECODER_DROPOUT_RATE),
         ]
 
         encoder_modules += [
             (conv(hidden_channels, hidden_channels), f"{Configuration.INPUT_ARGS} -> x"),
             nn.BatchNorm1d(hidden_channels),
             encoder_activation,
-            nn.Dropout(Configuration.DROPOUT_RATE),
+            nn.Dropout(Configuration.DECODER_DROPOUT_RATE),
         ] * (Configuration.NUM_ENCODER_LAYERS - 2)
 
         encoder_modules += [(conv(hidden_channels, out_channels), f"{Configuration.INPUT_ARGS} -> x")]
@@ -147,12 +147,16 @@ class PolygonSegmenter(nn.Module):
         decoder_modules = []
         decoder_modules += [
             nn.Linear(decoder_in_channels, out_channels),
+            nn.BatchNorm1d(out_channels),
             decoder_activation,
+            nn.Dropout(Configuration.DECODER_DROPOUT_RATE),
         ]
 
         decoder_modules += [
             nn.Linear(out_channels, out_channels),
+            nn.BatchNorm1d(out_channels),
             decoder_activation,
+            nn.Dropout(Configuration.DECODER_DROPOUT_RATE),
         ] * (Configuration.NUM_DECODER_LAYERS - 2)
 
         decoder_modules += [
