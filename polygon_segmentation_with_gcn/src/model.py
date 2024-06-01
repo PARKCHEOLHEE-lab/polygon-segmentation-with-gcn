@@ -16,7 +16,7 @@ import ray
 
 from PIL import Image
 from shapely import geometry
-from typing import List
+from typing import List, Tuple
 from tqdm import tqdm
 from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
@@ -164,9 +164,28 @@ class PolygonSegmenter(nn.Module):
             nn.Sigmoid(),
         ]
 
+        predictor_modules = []
+        predictor_modules += [
+            nn.Linear(out_channels, out_channels),
+            nn.ReLU(),
+        ]
+
+        predictor_modules += [
+            nn.Linear(out_channels, out_channels),
+            nn.ReLU(),
+        ] * (Configuration.NUM_PREDICTOR_LAYERS - 2)
+
+        predictor_modules += [
+            nn.Linear(out_channels, 3),
+            nn.Softmax(dim=1),
+        ]
+
         self.encoder = Sequential(input_args=Configuration.INPUT_ARGS, modules=encoder_modules)
         self.decoder = nn.Sequential(*decoder_modules)
+        self.k_predictor = nn.Sequential(*predictor_modules)
+
         self.use_skip_connection = use_skip_connection
+        self.out_channels = out_channels
 
         self.to(Configuration.DEVICE)
 
@@ -203,9 +222,47 @@ class PolygonSegmenter(nn.Module):
 
         return decoded
 
+    @staticmethod
+    def _train_predictor(predictor, each_graph, each_encoded_features):
+        unique_edge_index = each_graph.edge_label_index_only.unique(dim=1).t().tolist()
+
+        k_predicted = predictor(each_encoded_features.mean(dim=0).unsqueeze(dim=0))
+        k_target = 2
+        if [0, 1] in unique_edge_index:
+            k_target -= 1
+        if [1, 2] in unique_edge_index:
+            k_target -= 1
+
+        return k_predicted, k_target
+
     def forward(self, data: Batch) -> torch.Tensor:
         # Encode the features of polygon graphs
         encoded = self.encode(data)
+
+        cumulative_num_nodes = 0
+
+        k_pred_target_list = []
+        for gi in range(data.num_graphs):
+            each_graph = data[gi]
+
+            start = cumulative_num_nodes
+            end = cumulative_num_nodes + each_graph.num_nodes
+
+            each_encoded_features = encoded[start:end, :]
+
+            cumulative_num_nodes += each_graph.num_nodes
+
+            assert each_encoded_features.shape == (each_graph.num_nodes, self.out_channels)
+
+            k_pred_target_list.append(self._train_predictor(self.k_predictor, each_graph, each_encoded_features))
+
+        k_predicted_list = list(map(lambda x: x[0], k_pred_target_list))
+        k_target_list = list(map(lambda x: x[1], k_pred_target_list))
+
+        assert len(k_predicted_list) == len(k_target_list)
+
+        k_predictions = torch.cat(k_predicted_list, dim=0).to(Configuration.DEVICE)
+        k_targets = torch.tensor(k_target_list).to(Configuration.DEVICE)
 
         # Sample negative edges
         negative_edge_index = negative_sampling(
@@ -218,7 +275,7 @@ class PolygonSegmenter(nn.Module):
         # Decode the encoded features of the nodes to predict whether the edges are connected
         decoded = self.decode(data, encoded, torch.hstack([data.edge_label_index_only, negative_edge_index]).int())
 
-        return decoded
+        return decoded, k_predictions, k_targets
 
     @torch.no_grad()
     def infer(self, data_to_infer: Batch, use_filtering: bool = True) -> List[torch.Tensor]:
@@ -229,26 +286,21 @@ class PolygonSegmenter(nn.Module):
         for di in range(len(data_to_infer)):
             each_data = data_to_infer[di]
 
-            encoded = self.encode(each_data)
-
             node_pairs = torch.combinations(torch.arange(each_data.num_nodes), r=2).to(Configuration.DEVICE)
 
-            if use_filtering:
-                node_pairs_filtered = [[], []]
-                for node_pair in node_pairs:
-                    if node_pair.tolist() in each_data.edge_index.t().tolist():
-                        continue
-                    elif node_pair.tolist()[::-1] in each_data.edge_index.t().tolist():
-                        continue
+            node_pairs_filtered = [[], []]
+            for node_pair in node_pairs:
+                if node_pair.tolist() in each_data.edge_index.t().tolist():
+                    continue
+                elif node_pair.tolist()[::-1] in each_data.edge_index.t().tolist():
+                    continue
 
-                    node_pairs_filtered[0].append(node_pair[0].item())
-                    node_pairs_filtered[1].append(node_pair[1].item())
+                node_pairs_filtered[0].append(node_pair[0].item())
+                node_pairs_filtered[1].append(node_pair[1].item())
 
-                node_pairs = torch.tensor(node_pairs_filtered).to(Configuration.DEVICE)
+            node_pairs = torch.tensor(node_pairs_filtered).to(Configuration.DEVICE)
 
-            else:
-                node_pairs = node_pairs.t()
-
+            encoded = self.encode(each_data)
             connection_probabilities = self.decode(each_data, encoded, node_pairs)
             connection_probabilities = torch.where(
                 connection_probabilities < Configuration.CONNECTION_THRESHOLD,
@@ -256,9 +308,11 @@ class PolygonSegmenter(nn.Module):
                 connection_probabilities,
             )
 
-            topk_indices = torch.topk(connection_probabilities, k=Configuration.TOPK_TO_INFER).indices
+            topk_indices = torch.topk(
+                connection_probabilities, k=self.k_predictor(encoded.mean(dim=0).unsqueeze(dim=0)).argmax().item()
+            ).indices
 
-            connected_pairs = node_pairs.t()[topk_indices]
+            connected_pairs = node_pairs.t()[topk_indices].t()
 
             if use_filtering:
                 each_polygon = geometry.Polygon(each_data.x[:, :2].tolist())
@@ -275,6 +329,9 @@ class PolygonSegmenter(nn.Module):
                     segment, *_ = DataCreatorHelper.connect_polygon_segments_by_indices(
                         each_polygon, pair.unsqueeze(1).detach().cpu().numpy()
                     )
+
+                    if segment.length < Configuration.LINESTRING_REDUCTION_LENGTH * 2:
+                        continue
 
                     reduced_segment = DataCreatorHelper.extend_linestring(
                         segment, -Configuration.LINESTRING_REDUCTION_LENGTH, -Configuration.LINESTRING_REDUCTION_LENGTH
@@ -324,8 +381,8 @@ class PolygonSegmenterTrainer:
 
         if self.states:
             self.model.load_state_dict(self.states["model_state_dict"])
-            self.optimizer.load_state_dict(self.states["optimizer_state_dict"])
-            self.lr_scheduler.load_state_dict(self.states["lr_scheduler_state_dict"])
+            self.segmenter_optimizer.load_state_dict(self.states["optimizer_state_dict"])
+            self.segmenter_lr_scheduler.load_state_dict(self.states["lr_scheduler_state_dict"])
             print(f"Set pre-trained all states from {self.states_path} \n")
 
     def _set_summary_writer(self):
@@ -348,14 +405,30 @@ class PolygonSegmenterTrainer:
             print(f"Load pre-trained states from {self.states_path} \n")
 
     def _set_loss_function(self):
-        self.loss_function = nn.BCELoss(weight=torch.tensor(Configuration.BCE_LOSS_WEIGHT).to(Configuration.DEVICE))
+        self.segmenter_loss_function = nn.BCELoss(
+            weight=torch.tensor(Configuration.BCE_LOSS_WEIGHT).to(Configuration.DEVICE)
+        )
+
+        self.predictor_loss_function = nn.CrossEntropyLoss(
+            weight=torch.tensor(Configuration.CROSS_ENTROPY_LOSS_WEIGHT).to(Configuration.DEVICE)
+        )
+
         self.geometric_loss_function = GeometricLoss(weight=Configuration.GEOMETRIC_LOSS_WEIGHT)
 
     def _set_optimizer(self):
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=Configuration.LEARNING_RATE)
+        self.segmenter_optimizer = torch.optim.Adam(self.model.parameters(), lr=Configuration.SEGMENTER_LEARNING_RATE)
+        self.predictor_optimizer = torch.optim.Adam(
+            self.model.k_predictor.parameters(), lr=Configuration.PREDICTOR_LEARNING_RATE
+        )
 
     def _set_lr_scheduler(self):
-        self.lr_scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=5, verbose=True, factor=0.1)
+        self.segmenter_lr_scheduler = lr_scheduler.ReduceLROnPlateau(
+            self.segmenter_optimizer, patience=5, verbose=True, factor=0.1
+        )
+
+        self.predictor_lr_scheduler = lr_scheduler.ReduceLROnPlateau(
+            self.predictor_optimizer, patience=5, verbose=True, factor=0.1
+        )
 
     def _get_labels(self, data: Batch) -> torch.Tensor:
         ones = torch.ones(data.edge_label_index_only.shape[1])
@@ -370,78 +443,110 @@ class PolygonSegmenterTrainer:
         self,
         dataset: PolygonGraphDataset,
         model: nn.Module,
-        loss_function: nn.modules.loss._Loss,
+        segmenter_loss_function: nn.modules.loss._Loss,
+        predictor_loss_function: nn.modules.loss._Loss,
         geometric_loss_function: GeometricLoss,
-        optimizer: torch.optim.Optimizer,
+        segmenter_optimizer: torch.optim.Optimizer,
+        predictor_optimizer: torch.optim.Optimizer,
         use_geometric_loss: bool,
         epoch: int,
-    ) -> float:
+    ) -> Tuple[float]:
         """_summary_
 
         Args:
             dataset (PolygonGraphDataset): _description_
             model (nn.Module): _description_
-            loss_function (nn.modules.loss._Loss): _description_
+            segmenter_loss_function (nn.modules.loss._Loss): _description_
+            predictor_loss_function (nn.modules.loss._Loss): _description_
             optimizer (torch.optim.Optimizer): _description_
             epoch (int): _description_
 
         Returns:
-            float: _description_
+            Tuple[float]: _description_
         """
 
         train_losses = []
         for data_to_train in tqdm(dataset.train_dataloader, desc=f"Training... epoch: {epoch}/{Configuration.EPOCH}"):
-            train_decoded = model(data_to_train)
+            train_decoded, train_k_predictions, train_k_targets = model(data_to_train)
 
             train_labels = self._get_labels(data_to_train)
 
-            train_loss = loss_function(train_decoded, train_labels)
+            train_segmenter_loss = segmenter_loss_function(train_decoded, train_labels)
 
             train_geometric_loss = 0
             if use_geometric_loss:
                 train_infered = model.infer(data_to_train, use_filtering=False)
                 train_geometric_loss = geometric_loss_function(data_to_train, train_infered).item()
 
-            train_losses.append(train_loss.item() + train_geometric_loss)
+            train_predictor_loss = predictor_loss_function(train_k_predictions, train_k_targets)
+
+            train_total_loss = train_segmenter_loss + train_predictor_loss + train_geometric_loss
+
+            train_losses.append(train_total_loss.item())
 
             model.zero_grad()
-            train_loss.backward()
-            optimizer.step()
+            train_total_loss.backward()
+            segmenter_optimizer.step()
+            predictor_optimizer.step()
 
-        return sum(train_losses) / len(train_losses)
+        train_loss_avg = sum(train_losses) / len(train_losses)
+
+        return train_loss_avg
 
     @torch.no_grad()
     def _evaluate_each_epoch(
         self,
         dataset: PolygonGraphDataset,
         model: nn.Module,
-        loss_function: nn.modules.loss._Loss,
+        segmenter_loss_function: nn.modules.loss._Loss,
+        predictor_loss_function: nn.modules.loss._Loss,
         geometric_loss_function: GeometricLoss,
         use_geometric_loss: bool,
         epoch: int,
-    ):
+    ) -> Tuple[float]:
+        """_summary_
+
+        Args:
+            dataset (PolygonGraphDataset): _description_
+            model (nn.Module): _description_
+            segmenter_loss_function (nn.modules.loss._Loss): _description_
+            predictor_loss_function (nn.modules.loss._Loss): _description_
+            geometric_loss_function (GeometricLoss): _description_
+            use_geometric_loss (bool): _description_
+            epoch (int): _description_
+
+        Returns:
+            Tuple[float]: _description_
+        """
+
         model.eval()
 
         validation_losses = []
         for data_to_validate in tqdm(
             dataset.validation_dataloder, desc=f"Evaluating... epoch: {epoch}/{Configuration.EPOCH}"
         ):
-            validation_decoded = model(data_to_validate)
+            validation_decoded, validation_k_predictions, validation_k_targets = model(data_to_validate)
 
             validation_labels = self._get_labels(data_to_validate)
 
-            validation_loss = loss_function(validation_decoded, validation_labels)
+            validation_segmenter_loss = segmenter_loss_function(validation_decoded, validation_labels)
 
             validation_geometric_loss = 0
             if use_geometric_loss:
                 validation_infered = model.infer(data_to_validate, use_filtering=False)
                 validation_geometric_loss = geometric_loss_function(data_to_validate, validation_infered).item()
 
-            validation_losses.append(validation_loss.item() + validation_geometric_loss)
+            validation_predictor_loss = predictor_loss_function(validation_k_predictions, validation_k_targets)
+
+            validation_total_loss = validation_segmenter_loss + validation_predictor_loss + validation_geometric_loss
+
+            validation_losses.append(validation_total_loss.item())
 
         model.train()
 
-        return sum(validation_losses) / len(validation_losses)
+        validation_loss_avg = sum(validation_losses) / len(validation_losses)
+
+        return validation_loss_avg
 
     def _get_figures_to_evaluate_qualitatively(self, batch: Batch, indices: List[torch.Tensor]):
         dpi = 100
@@ -548,8 +653,8 @@ class PolygonSegmenterTrainer:
         irregular_train_batch = [data_to_infer for data_to_infer in irregular_train_sampled][0]
         regular_train_batch = [data_to_infer for data_to_infer in regular_train_sampled][0]
 
-        irregular_train_segmentation_indices = model.infer(irregular_train_batch)
-        regular_train_segmentation_indices = model.infer(regular_train_batch)
+        irregular_train_segmentation_indices = model.infer(irregular_train_batch, use_filtering=False)
+        regular_train_segmentation_indices = model.infer(regular_train_batch, use_filtering=False)
 
         figures = []
 
@@ -571,8 +676,8 @@ class PolygonSegmenterTrainer:
         irregular_validation_batch = [data_to_infer for data_to_infer in irregular_validation_sampled][0]
         regular_validation_batch = [data_to_infer for data_to_infer in regular_validation_sampled][0]
 
-        irregular_validation_segmentation_indices = model.infer(irregular_validation_batch)
-        regular_validation_segmentation_indices = model.infer(regular_validation_batch)
+        irregular_validation_segmentation_indices = model.infer(irregular_validation_batch, use_filtering=False)
+        regular_validation_segmentation_indices = model.infer(regular_validation_batch, use_filtering=False)
 
         figures += self._get_figures_to_evaluate_qualitatively(
             irregular_validation_batch, irregular_validation_segmentation_indices
@@ -627,9 +732,11 @@ class PolygonSegmenterTrainer:
             avg_train_loss = self._train_each_epoch(
                 self.dataset,
                 self.model,
-                self.loss_function,
+                self.segmenter_loss_function,
+                self.predictor_loss_function,
                 self.geometric_loss_function,
-                self.optimizer,
+                self.segmenter_optimizer,
+                self.predictor_optimizer,
                 self.use_geometric_loss,
                 epoch,
             )
@@ -637,13 +744,14 @@ class PolygonSegmenterTrainer:
             avg_validation_loss = self._evaluate_each_epoch(
                 self.dataset,
                 self.model,
-                self.loss_function,
+                self.segmenter_loss_function,
+                self.predictor_loss_function,
                 self.geometric_loss_function,
                 self.use_geometric_loss,
                 epoch,
             )
 
-            self.lr_scheduler.step(avg_validation_loss)
+            self.segmenter_lr_scheduler.step(avg_validation_loss)
 
             if avg_validation_loss < best_loss:
                 best_loss = avg_validation_loss
@@ -651,9 +759,12 @@ class PolygonSegmenterTrainer:
                 states = {
                     "epoch": epoch,
                     "best_loss": best_loss,
-                    "model_state_dict": self.model.state_dict(),
-                    "optimizer_state_dict": self.optimizer.state_dict(),
-                    "lr_scheduler_state_dict": self.lr_scheduler.state_dict(),
+                    "segmenter_state_dict": self.model.state_dict(),
+                    "predictor_state_dict": self.model.k_predictor.state_dict(),
+                    "segmenter_optimizer_state_dict": self.segmenter_optimizer.state_dict(),
+                    "segmenter_lr_scheduler_state_dict": self.segmenter_lr_scheduler.state_dict(),
+                    "predictor_optimizer_state_dict": self.predictor_optimizer.state_dict(),
+                    "predictor_lr_scheduler_state_dict": self.predictor_lr_scheduler.state_dict(),
                     "configuration": {k: v for k, v in Configuration()},
                 }
 
@@ -665,12 +776,18 @@ class PolygonSegmenterTrainer:
 
                 torch.save(states, self.states_path)
 
-            self.summary_writer.add_scalar("train_loss", avg_train_loss, epoch)
-            self.summary_writer.add_scalar("validation_loss", avg_validation_loss, epoch)
+            self.summary_writer.add_scalar("segmenter_train_loss", avg_train_loss, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_loss", avg_validation_loss, epoch)
 
             self.evaluate_qualitatively(self.dataset, self.model, epoch)
 
-            print(f"Epoch: {epoch}th Train Loss: {avg_train_loss}, Val Loss: {avg_validation_loss}")
+            print(
+                f"""
+                    Epoch: {epoch}th
+                    Average Train Loss: {avg_train_loss}
+                    Average Validation Loss: {avg_validation_loss}
+                """
+            )
 
 
 if __name__ == "__main__":
@@ -678,7 +795,7 @@ if __name__ == "__main__":
 
     dataset = PolygonGraphDataset()
     model = PolygonSegmenter(
-        conv_type=Configuration.GRAPHCONV,
+        conv_type=Configuration.GATCONV,
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
