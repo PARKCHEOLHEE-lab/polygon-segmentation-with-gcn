@@ -554,9 +554,9 @@ class PolygonSegmenterTrainer:
 
             validation_total_loss = validation_segmenter_loss + validation_predictor_loss + validation_geometric_loss
 
-            accuracy_metric.update((validation_decoded > Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
-            f1_score_metric.update((validation_decoded > Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
-            auroc_metric.update((validation_decoded > Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+            accuracy_metric.update((validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+            f1_score_metric.update((validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+            auroc_metric.update((validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
 
             validation_losses.append(validation_total_loss.item())
 
