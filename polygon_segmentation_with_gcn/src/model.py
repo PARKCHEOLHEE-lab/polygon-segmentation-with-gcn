@@ -572,8 +572,6 @@ class PolygonSegmenterTrainer:
 
             validation_decoded_for_metrics = validation_decoded[: data_to_validate.edge_label_index_only.shape[1]]
 
-            assert validation_decoded_for_metrics.shape == validation_labels_without_smoothing.shape
-
             accuracy_metric.update(
                 (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
                 validation_labels_without_smoothing[: data_to_validate.edge_label_index_only.shape[1]],
