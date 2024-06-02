@@ -364,8 +364,8 @@ class PolygonSegmenterTrainer:
         model: nn.Module,
         pre_trained_path: str = None,
         is_debug_mode: bool = False,
-        use_geometric_loss: bool = Configuration.USE_GEOMETRIC_LOSS,
-        use_label_smoothing: bool = Configuration.USE_LABEL_SMOOTHING,
+        use_geometric_loss: bool = False,
+        use_label_smoothing: bool = False,
     ):
         self.dataset = dataset
         self.model = model
@@ -563,9 +563,21 @@ class PolygonSegmenterTrainer:
 
             validation_total_loss = validation_segmenter_loss + validation_predictor_loss + validation_geometric_loss
 
-            accuracy_metric.update((validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
-            f1_score_metric.update((validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
-            auroc_metric.update((validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+            validation_labels_without_smoothing = torch.where(
+                torch.isclose(validation_labels, torch.tensor(1 - Configuration.LABEL_SMOOTHING_FACTOR / 2)),
+                torch.tensor(1).to(Configuration.DEVICE),
+                torch.tensor(0).to(Configuration.DEVICE),
+            )
+
+            accuracy_metric.update(
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels_without_smoothing
+            )
+            f1_score_metric.update(
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels_without_smoothing
+            )
+            auroc_metric.update(
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels_without_smoothing
+            )
 
             validation_losses.append(validation_total_loss.item())
 
