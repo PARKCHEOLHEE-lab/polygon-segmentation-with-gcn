@@ -20,7 +20,7 @@ from typing import List, Tuple
 from tqdm import tqdm
 from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import Sequential, GCNConv, GraphConv, GATConv, SAGEConv
+from torch_geometric.nn import Sequential, GCNConv, GraphConv, GATConv
 from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
@@ -108,6 +108,7 @@ class PolygonSegmenter(nn.Module):
         out_channels: int,
         encoder_activation: nn.Module,
         decoder_activation: nn.Module,
+        predictor_activation: nn.Module,
         use_skip_connection: bool = True,
     ):
         super().__init__()
@@ -116,8 +117,6 @@ class PolygonSegmenter(nn.Module):
             conv = GCNConv
         elif conv_type == Configuration.GRAPHCONV:
             conv = GraphConv
-        elif conv_type == Configuration.SAGECONV:
-            conv = SAGEConv
         elif conv_type == Configuration.GATCONV:
             conv = GATConv
         else:
@@ -167,12 +166,12 @@ class PolygonSegmenter(nn.Module):
         predictor_modules = []
         predictor_modules += [
             nn.Linear(out_channels, out_channels),
-            nn.ReLU(),
+            predictor_activation,
         ]
 
         predictor_modules += [
             nn.Linear(out_channels, out_channels),
-            nn.ReLU(),
+            predictor_activation,
         ] * (Configuration.NUM_PREDICTOR_LAYERS - 2)
 
         predictor_modules += [
@@ -380,9 +379,12 @@ class PolygonSegmenterTrainer:
         self._set_lr_scheduler()
 
         if self.states:
-            self.model.load_state_dict(self.states["model_state_dict"])
-            self.segmenter_optimizer.load_state_dict(self.states["optimizer_state_dict"])
-            self.segmenter_lr_scheduler.load_state_dict(self.states["lr_scheduler_state_dict"])
+            self.model.load_state_dict(self.states["segmenter_state_dict"])
+            self.model.k_predictor.load_state_dict(self.states["predictor_state_dict"])
+            self.segmenter_optimizer.load_state_dict(self.states["segmenter_optimizer_state_dict"])
+            self.segmenter_lr_scheduler.load_state_dict(self.states["segmenter_lr_scheduler_state_dict"])
+            self.predictor_optimizer.load_state_dict(self.states["predictor_optimizer_state_dict"])
+            self.predictor_lr_scheduler.load_state_dict(self.states["predictor_lr_scheduler_state_dict"])
             print(f"Set pre-trained all states from {self.states_path} \n")
 
     def _set_summary_writer(self):
@@ -799,8 +801,9 @@ if __name__ == "__main__":
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
-        encoder_activation=nn.ReLU().to(Configuration.DEVICE),
-        decoder_activation=nn.ReLU().to(Configuration.DEVICE),
+        encoder_activation=nn.PReLU().to(Configuration.DEVICE),
+        decoder_activation=nn.PReLU().to(Configuration.DEVICE),
+        predictor_activation=nn.PReLU().to(Configuration.DEVICE),
         use_skip_connection=True,
     )
 

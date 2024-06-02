@@ -47,7 +47,13 @@ class DatasetHelper:
             else:
                 edge_label_index_only = each_data.edge_label_index_only
                 if edge_label_index_only.shape[1] == 1:
-                    edge_label_index_only = np.hstack([edge_label_index_only, np.array([[0], [1]])])
+                    # edge_label_index_only = np.hstack([edge_label_index_only, np.array([[0], [1]])])
+                    edge_label_index_only = np.hstack(
+                        [
+                            edge_label_index_only,
+                            np.array([[edge_label_index_only[0][0]], [edge_label_index_only[1][0]]]),
+                        ]
+                    )
 
                 edge_label_index_only = np.repeat(
                     edge_label_index_only, each_data.num_nodes * Configuration.POSITIVE_SAMPLE_MULTIPLIER, axis=1
