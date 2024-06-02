@@ -25,6 +25,7 @@ from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
+from torchmetrics import Accuracy, F1Score, AUROC
 
 from polygon_segmentation_with_gcn.src.commonutils import runtime_calculator, add_debugvisualizer
 from polygon_segmentation_with_gcn.src.config import Configuration
@@ -377,6 +378,7 @@ class PolygonSegmenterTrainer:
         self._set_loss_function()
         self._set_optimizer()
         self._set_lr_scheduler()
+        self._set_metrics()
 
         if self.states:
             self.model.load_state_dict(self.states["segmenter_state_dict"])
@@ -431,6 +433,11 @@ class PolygonSegmenterTrainer:
         self.predictor_lr_scheduler = lr_scheduler.ReduceLROnPlateau(
             self.predictor_optimizer, patience=5, verbose=True, factor=0.1
         )
+
+    def _set_metrics(self):
+        self.accuracy_metric = Accuracy(task="binary").to(Configuration.DEVICE)
+        self.f1_score_metric = F1Score(task="binary").to(Configuration.DEVICE)
+        self.auroc_metric = AUROC(task="binary").to(Configuration.DEVICE)
 
     def _get_labels(self, data: Batch) -> torch.Tensor:
         ones = torch.ones(data.edge_label_index_only.shape[1])
@@ -504,6 +511,9 @@ class PolygonSegmenterTrainer:
         predictor_loss_function: nn.modules.loss._Loss,
         geometric_loss_function: GeometricLoss,
         use_geometric_loss: bool,
+        accuracy_metric: Accuracy,
+        f1_score_metric: F1Score,
+        auroc_metric: AUROC,
         epoch: int,
     ) -> Tuple[float]:
         """_summary_
@@ -522,6 +532,8 @@ class PolygonSegmenterTrainer:
         """
 
         model.eval()
+        accuracy_metric.reset()
+        f1_score_metric.reset()
 
         validation_losses = []
         for data_to_validate in tqdm(
@@ -542,13 +554,21 @@ class PolygonSegmenterTrainer:
 
             validation_total_loss = validation_segmenter_loss + validation_predictor_loss + validation_geometric_loss
 
+            accuracy_metric.update((validation_decoded > Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+            f1_score_metric.update((validation_decoded > Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+            auroc_metric.update((validation_decoded > Configuration.CONNECTION_THRESHOLD).int(), validation_labels)
+
             validation_losses.append(validation_total_loss.item())
 
         model.train()
 
         validation_loss_avg = sum(validation_losses) / len(validation_losses)
 
-        return validation_loss_avg
+        validation_accuracy = accuracy_metric.compute().item()
+        validation_f1_score = f1_score_metric.compute().item()
+        validation_auroc = auroc_metric.compute().item()
+
+        return validation_loss_avg, validation_accuracy, validation_f1_score, validation_auroc
 
     def _get_figures_to_evaluate_qualitatively(self, batch: Batch, indices: List[torch.Tensor]):
         dpi = 100
@@ -723,15 +743,15 @@ class PolygonSegmenterTrainer:
         if self.use_geometric_loss:
             ray.init()
 
-        best_loss = torch.inf
+        best_auroc = -torch.inf
         start = 1
 
         if len(self.states) > 0:
             start = self.states["epoch"] + 1
-            best_loss = self.states["best_loss"]
+            best_auroc = self.states["best_auroc"]
 
         for epoch in range(start, Configuration.EPOCH + 1):
-            avg_train_loss = self._train_each_epoch(
+            train_loss_avg = self._train_each_epoch(
                 self.dataset,
                 self.model,
                 self.segmenter_loss_function,
@@ -743,24 +763,29 @@ class PolygonSegmenterTrainer:
                 epoch,
             )
 
-            avg_validation_loss = self._evaluate_each_epoch(
+            validation_loss_avg, validation_accuracy, validation_f1_score, validation_auroc = self._evaluate_each_epoch(
                 self.dataset,
                 self.model,
                 self.segmenter_loss_function,
                 self.predictor_loss_function,
                 self.geometric_loss_function,
                 self.use_geometric_loss,
+                self.accuracy_metric,
+                self.f1_score_metric,
+                self.auroc_metric,
                 epoch,
             )
 
-            self.segmenter_lr_scheduler.step(avg_validation_loss)
+            self.segmenter_lr_scheduler.step(validation_loss_avg)
 
-            if avg_validation_loss < best_loss:
-                best_loss = avg_validation_loss
+            if validation_auroc > best_auroc:
+                best_loss = validation_loss_avg
+                best_auroc = validation_auroc
 
                 states = {
                     "epoch": epoch,
                     "best_loss": best_loss,
+                    "best_auroc": best_auroc,
                     "segmenter_state_dict": self.model.state_dict(),
                     "predictor_state_dict": self.model.k_predictor.state_dict(),
                     "segmenter_optimizer_state_dict": self.segmenter_optimizer.state_dict(),
@@ -778,16 +803,22 @@ class PolygonSegmenterTrainer:
 
                 torch.save(states, self.states_path)
 
-            self.summary_writer.add_scalar("segmenter_train_loss", avg_train_loss, epoch)
-            self.summary_writer.add_scalar("segmenter_validation_loss", avg_validation_loss, epoch)
+            self.summary_writer.add_scalar("segmenter_train_loss", train_loss_avg, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_loss", validation_loss_avg, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_accuracy", validation_accuracy, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_f1_score", validation_f1_score, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_auroc", validation_auroc, epoch)
 
             self.evaluate_qualitatively(self.dataset, self.model, epoch)
 
             print(
                 f"""
                     Epoch: {epoch}th
-                    Average Train Loss: {avg_train_loss}
-                    Average Validation Loss: {avg_validation_loss}
+                    Average Train Loss: {train_loss_avg}
+                    Average Validation Loss: {validation_loss_avg}
+                    Validation Accuracy: {validation_accuracy}
+                    Validation F1 Score: {validation_f1_score}
+                    Validation AUROC: {validation_auroc}
                 """
             )
 
