@@ -568,7 +568,7 @@ class PolygonSegmenterTrainer:
                 torch.isclose(validation_labels, torch.tensor(1 - Configuration.LABEL_SMOOTHING_FACTOR / 2)),
                 torch.tensor(1).to(Configuration.DEVICE),
                 torch.tensor(0).to(Configuration.DEVICE),
-            )[: data_to_validate.edge_label_index_only.shape[1]]
+            )
 
             validation_decoded_for_metrics = validation_decoded[: data_to_validate.edge_label_index_only.shape[1]]
 
@@ -576,14 +576,14 @@ class PolygonSegmenterTrainer:
 
             accuracy_metric.update(
                 (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
-                validation_labels_without_smoothing,
+                validation_labels_without_smoothing[: data_to_validate.edge_label_index_only.shape[1]],
             )
             f1_score_metric.update(
                 (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
-                validation_labels_without_smoothing,
+                validation_labels_without_smoothing[: data_to_validate.edge_label_index_only.shape[1]],
             )
             auroc_metric.update(
-                (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(),
                 validation_labels_without_smoothing,
             )
 
