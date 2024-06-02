@@ -99,6 +99,10 @@ class ModelConfiguration:
 
     INPUT_ARGS = "x, edge_index, edge_weight"
 
+    USE_GEOMETRIC_LOSS = False
+    USE_LABEL_SMOOTHING = True
+    USE_SKIP_CONNECTION = True
+
 
 class Configuration(DataConfiguration, ModelConfiguration):
     def __iter__(self):

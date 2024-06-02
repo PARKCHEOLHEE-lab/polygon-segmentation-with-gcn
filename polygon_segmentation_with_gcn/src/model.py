@@ -110,7 +110,7 @@ class PolygonSegmenter(nn.Module):
         encoder_activation: nn.Module,
         decoder_activation: nn.Module,
         predictor_activation: nn.Module,
-        use_skip_connection: bool = True,
+        use_skip_connection: bool = Configuration.USE_SKIP_CONNECTION,
     ):
         super().__init__()
 
@@ -364,8 +364,8 @@ class PolygonSegmenterTrainer:
         model: nn.Module,
         pre_trained_path: str = None,
         is_debug_mode: bool = False,
-        use_geometric_loss: bool = False,
-        use_label_smoothing: bool = False,
+        use_geometric_loss: bool = Configuration.USE_GEOMETRIC_LOSS,
+        use_label_smoothing: bool = Configuration.USE_LABEL_SMOOTHING,
     ):
         self.dataset = dataset
         self.model = model
@@ -846,7 +846,7 @@ if __name__ == "__main__":
         encoder_activation=nn.PReLU().to(Configuration.DEVICE),
         decoder_activation=nn.PReLU().to(Configuration.DEVICE),
         predictor_activation=nn.PReLU().to(Configuration.DEVICE),
-        use_skip_connection=True,
+        use_skip_connection=Configuration.USE_SKIP_CONNECTION,
     )
 
     polygon_segmenter_trainer = PolygonSegmenterTrainer(
@@ -854,7 +854,7 @@ if __name__ == "__main__":
         model=model,
         is_debug_mode=True,
         pre_trained_path=None,
-        use_geometric_loss=False,
-        use_label_smoothing=True,
+        use_geometric_loss=Configuration.USE_GEOMETRIC_LOSS,
+        use_label_smoothing=Configuration.USE_LABEL_SMOOTHING,
     )
     polygon_segmenter_trainer.train()
