@@ -543,6 +543,7 @@ class PolygonSegmenterTrainer:
         model.eval()
         accuracy_metric.reset()
         f1_score_metric.reset()
+        auroc_metric.reset()
 
         validation_losses = []
         for data_to_validate in tqdm(
@@ -567,16 +568,23 @@ class PolygonSegmenterTrainer:
                 torch.isclose(validation_labels, torch.tensor(1 - Configuration.LABEL_SMOOTHING_FACTOR / 2)),
                 torch.tensor(1).to(Configuration.DEVICE),
                 torch.tensor(0).to(Configuration.DEVICE),
-            )
+            )[: data_to_validate.edge_label_index_only.shape[1]]
+
+            validation_decoded_for_metrics = validation_decoded[: data_to_validate.edge_label_index_only.shape[1]]
+
+            assert validation_decoded_for_metrics.shape == validation_labels_without_smoothing.shape
 
             accuracy_metric.update(
-                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels_without_smoothing
+                (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
+                validation_labels_without_smoothing,
             )
             f1_score_metric.update(
-                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels_without_smoothing
+                (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
+                validation_labels_without_smoothing,
             )
             auroc_metric.update(
-                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(), validation_labels_without_smoothing
+                (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
+                validation_labels_without_smoothing,
             )
 
             validation_losses.append(validation_total_loss.item())
