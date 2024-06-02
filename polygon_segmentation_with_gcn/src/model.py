@@ -186,6 +186,7 @@ class PolygonSegmenter(nn.Module):
 
         self.use_skip_connection = use_skip_connection
         self.out_channels = out_channels
+        self.conv_type = conv_type
 
         self.to(Configuration.DEVICE)
 
@@ -364,12 +365,14 @@ class PolygonSegmenterTrainer:
         pre_trained_path: str = None,
         is_debug_mode: bool = False,
         use_geometric_loss: bool = False,
+        use_label_smoothing: bool = False,
     ):
         self.dataset = dataset
         self.model = model
         self.pre_trained_path = pre_trained_path
         self.is_debug_mode = is_debug_mode
         self.use_geometric_loss = use_geometric_loss
+        self.use_label_smoothing = use_label_smoothing
 
         if self.is_debug_mode:
             add_debugvisualizer(globals())
@@ -396,6 +399,7 @@ class PolygonSegmenterTrainer:
 
         self.summary_writer = SummaryWriter(log_dir=self.log_dir)
 
+        self.summary_writer.add_text("conv_type", self.model.conv_type)
         for key, value in Configuration():
             self.summary_writer.add_text(key, str(value))
 
@@ -439,11 +443,14 @@ class PolygonSegmenterTrainer:
         self.f1_score_metric = F1Score(task="binary").to(Configuration.DEVICE)
         self.auroc_metric = AUROC(task="binary").to(Configuration.DEVICE)
 
-    def _get_labels(self, data: Batch) -> torch.Tensor:
+    def _get_labels(self, data: Batch, use_label_smoothing: bool) -> torch.Tensor:
         ones = torch.ones(data.edge_label_index_only.shape[1])
         zeros = torch.tensor([0] * int(data.edge_label_index_only.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER))
 
         labels = torch.hstack([ones, zeros]).to(Configuration.DEVICE)
+
+        if use_label_smoothing:
+            labels = (1 - Configuration.LABEL_SMOOTHING_FACTOR) * labels + Configuration.LABEL_SMOOTHING_FACTOR / 2
 
         return labels
 
@@ -458,6 +465,7 @@ class PolygonSegmenterTrainer:
         segmenter_optimizer: torch.optim.Optimizer,
         predictor_optimizer: torch.optim.Optimizer,
         use_geometric_loss: bool,
+        use_label_smoothing: bool,
         epoch: int,
     ) -> Tuple[float]:
         """_summary_
@@ -478,7 +486,7 @@ class PolygonSegmenterTrainer:
         for data_to_train in tqdm(dataset.train_dataloader, desc=f"Training... epoch: {epoch}/{Configuration.EPOCH}"):
             train_decoded, train_k_predictions, train_k_targets = model(data_to_train)
 
-            train_labels = self._get_labels(data_to_train)
+            train_labels = self._get_labels(data_to_train, use_label_smoothing)
 
             train_segmenter_loss = segmenter_loss_function(train_decoded, train_labels)
 
@@ -511,6 +519,7 @@ class PolygonSegmenterTrainer:
         predictor_loss_function: nn.modules.loss._Loss,
         geometric_loss_function: GeometricLoss,
         use_geometric_loss: bool,
+        use_label_smoothing: bool,
         accuracy_metric: Accuracy,
         f1_score_metric: F1Score,
         auroc_metric: AUROC,
@@ -541,7 +550,7 @@ class PolygonSegmenterTrainer:
         ):
             validation_decoded, validation_k_predictions, validation_k_targets = model(data_to_validate)
 
-            validation_labels = self._get_labels(data_to_validate)
+            validation_labels = self._get_labels(data_to_validate, use_label_smoothing)
 
             validation_segmenter_loss = segmenter_loss_function(validation_decoded, validation_labels)
 
@@ -760,6 +769,7 @@ class PolygonSegmenterTrainer:
                 self.segmenter_optimizer,
                 self.predictor_optimizer,
                 self.use_geometric_loss,
+                self.use_label_smoothing,
                 epoch,
             )
 
@@ -770,6 +780,7 @@ class PolygonSegmenterTrainer:
                 self.predictor_loss_function,
                 self.geometric_loss_function,
                 self.use_geometric_loss,
+                self.use_label_smoothing,
                 self.accuracy_metric,
                 self.f1_score_metric,
                 self.auroc_metric,
@@ -844,5 +855,6 @@ if __name__ == "__main__":
         is_debug_mode=True,
         pre_trained_path=None,
         use_geometric_loss=False,
+        use_label_smoothing=True,
     )
     polygon_segmenter_trainer.train()
