@@ -26,12 +26,14 @@ class DatasetHelper:
         edi = 0
         while edi < len(data):
             each_data = data[edi]
-            each_data.x = each_data.x[:, :-1]
             each_data.x = torch.tensor(each_data.x, dtype=torch.float32).to(Configuration.DEVICE)
             each_data.edge_weight = torch.tensor(each_data.edge_weight, dtype=torch.float32).to(Configuration.DEVICE)
             each_data.edge_index = torch.tensor(each_data.edge_index).to(Configuration.DEVICE)
             each_data.edge_label_index = torch.tensor(each_data.edge_label_index).to(Configuration.DEVICE)
             each_data.edge_label = torch.ones([each_data.edge_label_index.shape[1]]).to(Configuration.DEVICE)
+
+            concave_convex_noise = (torch.randn(each_data.x.shape[0]) * 0.1).to(Configuration.DEVICE)
+            each_data.x[:, 5] += concave_convex_noise
 
             if all(each_data.x[:, :2][-1] == each_data.x[:, :2][-2]):
                 del data[edi]
