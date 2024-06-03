@@ -99,9 +99,9 @@ class ModelConfiguration:
 
     INPUT_ARGS = "x, edge_index, edge_weight"
 
-    ENCODER_ACTIVATION = torch.nn.PReLU()
-    DECODER_ACTIVATION = torch.nn.PReLU()
-    PREDICTOR_ACTIVATION = torch.nn.PReLU()
+    ENCODER_ACTIVATION = torch.nn.ReLU()
+    DECODER_ACTIVATION = torch.nn.ReLU()
+    PREDICTOR_ACTIVATION = torch.nn.ReLU()
 
     USE_GEOMETRIC_LOSS = False
     USE_LABEL_SMOOTHING = True
