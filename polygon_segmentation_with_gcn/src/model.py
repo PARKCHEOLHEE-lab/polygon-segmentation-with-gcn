@@ -776,12 +776,12 @@ class PolygonSegmenterTrainer:
         if self.use_geometric_loss:
             ray.init()
 
-        best_auroc = -torch.inf
+        best_recall = -torch.inf
         start = 1
 
         if len(self.states) > 0:
             start = self.states["epoch"] + 1
-            best_auroc = self.states["best_auroc"]
+            best_recall = self.states["best_recall"]
 
         for epoch in range(start, Configuration.EPOCH + 1):
             train_loss_avg = self._train_each_epoch(
@@ -820,14 +820,14 @@ class PolygonSegmenterTrainer:
 
             self.segmenter_lr_scheduler.step(validation_loss_avg)
 
-            if validation_auroc > best_auroc:
+            if validation_recall > best_recall:
                 best_loss = validation_loss_avg
-                best_auroc = validation_auroc
+                best_recall = validation_recall
 
                 states = {
                     "epoch": epoch,
                     "best_loss": best_loss,
-                    "best_auroc": best_auroc,
+                    "best_recall": best_recall,
                     "segmenter_state_dict": self.model.state_dict(),
                     "predictor_state_dict": self.model.k_predictor.state_dict(),
                     "segmenter_optimizer_state_dict": self.segmenter_optimizer.state_dict(),
