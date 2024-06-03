@@ -570,15 +570,13 @@ class PolygonSegmenterTrainer:
                 torch.tensor(0).to(Configuration.DEVICE),
             )
 
-            validation_decoded_for_metrics = validation_decoded[: data_to_validate.edge_label_index_only.shape[1]]
-
             accuracy_metric.update(
-                (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
-                validation_labels_without_smoothing[: data_to_validate.edge_label_index_only.shape[1]],
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(),
+                validation_labels_without_smoothing,
             )
             f1_score_metric.update(
-                (validation_decoded_for_metrics >= Configuration.CONNECTION_THRESHOLD).int(),
-                validation_labels_without_smoothing[: data_to_validate.edge_label_index_only.shape[1]],
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(),
+                validation_labels_without_smoothing,
             )
             auroc_metric.update(
                 (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(),
@@ -861,9 +859,9 @@ if __name__ == "__main__":
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
-        encoder_activation=nn.PReLU().to(Configuration.DEVICE),
-        decoder_activation=nn.PReLU().to(Configuration.DEVICE),
-        predictor_activation=nn.PReLU().to(Configuration.DEVICE),
+        encoder_activation=Configuration.ENCODER_ACTIVATION.to(Configuration.DEVICE),
+        decoder_activation=Configuration.DECODER_ACTIVATION.to(Configuration.DEVICE),
+        predictor_activation=Configuration.PREDICTOR_ACTIVATION.to(Configuration.DEVICE),
         use_skip_connection=Configuration.USE_SKIP_CONNECTION,
     )
 
