@@ -25,7 +25,7 @@ from torch_geometric.utils import negative_sampling
 from torch.optim import lr_scheduler
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
-from torchmetrics import Accuracy, F1Score, AUROC
+from torchmetrics import Accuracy, F1Score, AUROC, Recall
 
 from polygon_segmentation_with_gcn.src.commonutils import runtime_calculator, add_debugvisualizer
 from polygon_segmentation_with_gcn.src.config import Configuration
@@ -442,6 +442,7 @@ class PolygonSegmenterTrainer:
         self.accuracy_metric = Accuracy(task="binary").to(Configuration.DEVICE)
         self.f1_score_metric = F1Score(task="binary").to(Configuration.DEVICE)
         self.auroc_metric = AUROC(task="binary").to(Configuration.DEVICE)
+        self.recall_metric = Recall(task="binary").to(Configuration.DEVICE)
 
     def _get_labels(self, data: Batch, use_label_smoothing: bool) -> torch.Tensor:
         ones = torch.ones(data.edge_label_index_only.shape[1])
@@ -523,6 +524,7 @@ class PolygonSegmenterTrainer:
         accuracy_metric: Accuracy,
         f1_score_metric: F1Score,
         auroc_metric: AUROC,
+        recall_metric: Recall,
         epoch: int,
     ) -> Tuple[float]:
         """_summary_
@@ -544,6 +546,7 @@ class PolygonSegmenterTrainer:
         accuracy_metric.reset()
         f1_score_metric.reset()
         auroc_metric.reset()
+        recall_metric.reset()
 
         validation_losses = []
         for data_to_validate in tqdm(
@@ -582,6 +585,10 @@ class PolygonSegmenterTrainer:
                 (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(),
                 validation_labels_without_smoothing,
             )
+            recall_metric.update(
+                (validation_decoded >= Configuration.CONNECTION_THRESHOLD).int(),
+                validation_labels_without_smoothing,
+            )
 
             validation_losses.append(validation_total_loss.item())
 
@@ -592,8 +599,9 @@ class PolygonSegmenterTrainer:
         validation_accuracy = accuracy_metric.compute().item()
         validation_f1_score = f1_score_metric.compute().item()
         validation_auroc = auroc_metric.compute().item()
+        validation_recall = recall_metric.compute().item()
 
-        return validation_loss_avg, validation_accuracy, validation_f1_score, validation_auroc
+        return validation_loss_avg, validation_accuracy, validation_f1_score, validation_auroc, validation_recall
 
     def _get_figures_to_evaluate_qualitatively(self, batch: Batch, indices: List[torch.Tensor]):
         dpi = 100
@@ -789,7 +797,13 @@ class PolygonSegmenterTrainer:
                 epoch,
             )
 
-            validation_loss_avg, validation_accuracy, validation_f1_score, validation_auroc = self._evaluate_each_epoch(
+            (
+                validation_loss_avg,
+                validation_accuracy,
+                validation_f1_score,
+                validation_auroc,
+                validation_recall,
+            ) = self._evaluate_each_epoch(
                 self.dataset,
                 self.model,
                 self.segmenter_loss_function,
@@ -800,6 +814,7 @@ class PolygonSegmenterTrainer:
                 self.accuracy_metric,
                 self.f1_score_metric,
                 self.auroc_metric,
+                self.recall_metric,
                 epoch,
             )
 
@@ -835,6 +850,7 @@ class PolygonSegmenterTrainer:
             self.summary_writer.add_scalar("segmenter_validation_accuracy", validation_accuracy, epoch)
             self.summary_writer.add_scalar("segmenter_validation_f1_score", validation_f1_score, epoch)
             self.summary_writer.add_scalar("segmenter_validation_auroc", validation_auroc, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_recall", validation_recall, epoch)
 
             self.evaluate_qualitatively(self.dataset, self.model, epoch)
 
@@ -846,6 +862,7 @@ class PolygonSegmenterTrainer:
                     Validation Accuracy: {validation_accuracy}
                     Validation F1 Score: {validation_f1_score}
                     Validation AUROC: {validation_auroc}
+                    Validation Recall: {validation_recall}
                 """
             )
 
