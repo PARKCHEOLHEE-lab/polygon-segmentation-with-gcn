@@ -426,8 +426,6 @@ class PolygonSegmenter(nn.Module):
             else:
                 connected_pairs = connected_pairs[:, :predicted_k]
 
-            assert connected_pairs.shape == (2, predicted_k)
-
             infered.append(connected_pairs)
 
         self.train()
@@ -646,6 +644,7 @@ class PolygonSegmenterTrainer:
         auroc_metric: AUROC,
         recall_metric: Recall,
         epoch: int,
+        is_test: bool = False,
     ) -> Tuple[float]:
         """Evaluate the models for each epoch
 
@@ -662,6 +661,7 @@ class PolygonSegmenterTrainer:
             auroc_metric (AUROC): auroc metric
             recall_metric (Recall): recall metric
             epoch (int): each epoch
+            is_test (bool, optional): whether to evaluate on the test dataset. Defaults to False.
 
         Returns:
             Tuple[float]: average loss for the validation
@@ -673,9 +673,13 @@ class PolygonSegmenterTrainer:
         auroc_metric.reset()
         recall_metric.reset()
 
+        dataloader_to_validate = dataset.validation_dataloader
+        if is_test:
+            dataloader_to_validate = dataset.test_dataloader
+
         validation_losses = []
         for data_to_validate in tqdm(
-            dataset.validation_dataloder, desc=f"Evaluating... epoch: {epoch}/{Configuration.EPOCH}"
+            dataloader_to_validate, desc=f"Evaluating... epoch: {epoch}/{Configuration.EPOCH}"
         ):
             validation_decoded, validation_k_predictions, validation_k_targets = model(data_to_validate)
 
@@ -740,9 +744,6 @@ class PolygonSegmenterTrainer:
             List[plt.Figure]: figures
         """
 
-        dpi = 100
-        figsize = (5, 5)
-
         figures = []
 
         for si in range(len(indices)):
@@ -760,7 +761,7 @@ class PolygonSegmenterTrainer:
                 polygon, each_data.edge_label_index_only.T.unique(dim=0).detach().cpu().numpy().T
             )
 
-            figure = plt.figure(figsize=figsize, dpi=dpi)
+            figure = plt.figure(figsize=Configuration.FIGSIZE, dpi=Configuration.DPI)
             ax = figure.add_subplot(1, 1, 1)
             ax.axis("equal")
 
@@ -822,6 +823,41 @@ class PolygonSegmenterTrainer:
 
         return figures
 
+    def _merge_figures(self, figures: List[plt.Figure]) -> Image:
+        """Merge figures
+
+        Args:
+            viz_count (int): the number of figures to merge
+            figures (List[plt.Figure]): figures to merge
+
+        Returns:
+            Image: merged image
+        """
+
+        col_num = 5
+        row_num = int(np.ceil(len(figures) / col_num))
+        img_size = Configuration.FIGSIZE[0] * Configuration.DPI
+        merged_image = Image.new("RGB", (col_num * img_size, row_num * img_size), "white")
+
+        current_cols = 0
+        output_height = 0
+        output_width = 0
+
+        for figure in figures:
+            image = DataCreatorHelper.fig_to_img(figure)
+
+            merged_image.paste(image, (output_width, output_height))
+
+            current_cols += 1
+            if current_cols >= col_num:
+                output_width = 0
+                output_height += img_size
+                current_cols = 0
+            else:
+                output_width += img_size
+
+        return merged_image
+
     @runtime_calculator
     def evaluate_qualitatively(
         self, dataset: PolygonGraphDataset, model: nn.Module, epoch: int, viz_count: int = 10
@@ -879,30 +915,7 @@ class PolygonSegmenterTrainer:
             regular_validation_batch, regular_validation_segmentation_indices
         )
 
-        dpi = 100
-        figsize = (5, 5)
-
-        col_num = 5
-        row_num = int(np.ceil((viz_count * 4) / col_num))
-        img_size = figsize[0] * dpi
-        merged_image = Image.new("RGB", (col_num * img_size, row_num * img_size), "white")
-
-        current_cols = 0
-        output_height = 0
-        output_width = 0
-
-        for figure in figures:
-            image = DataCreatorHelper.fig_to_img(figure)
-
-            merged_image.paste(image, (output_width, output_height))
-
-            current_cols += 1
-            if current_cols >= col_num:
-                output_width = 0
-                output_height += img_size
-                current_cols = 0
-            else:
-                output_width += img_size
+        merged_image = self._merge_figures(figures)
 
         self.summary_writer.add_image(
             f"qualitative_evaluation_{epoch}", np.array(merged_image), epoch, dataformats="HWC"
@@ -998,7 +1011,7 @@ class PolygonSegmenterTrainer:
             self.evaluate_qualitatively(self.dataset, self.model, epoch)
 
             print(
-                f"""status
+                f"""training status
                     Epoch: {epoch}th
                     Average Train Loss: {train_loss_avg}
                     Average Validation Loss: {validation_loss_avg}
@@ -1008,6 +1021,77 @@ class PolygonSegmenterTrainer:
                     Validation Recall: {validation_recall}
                 """
             )
+
+    def test(self) -> None:
+        """Test segmenter model"""
+
+        (
+            test_loss_avg,
+            test_accuracy,
+            test_f1_score,
+            test_auroc,
+            test_recall,
+        ) = self._evaluate_each_epoch(
+            self.dataset,
+            self.model,
+            self.segmenter_loss_function,
+            self.predictor_loss_function,
+            self.geometric_loss_function,
+            self.use_geometric_loss,
+            self.use_label_smoothing,
+            self.accuracy_metric,
+            self.f1_score_metric,
+            self.auroc_metric,
+            self.recall_metric,
+            epoch=None,
+            is_test=True,
+        )
+
+        self.summary_writer.add_scalar("segmenter_test_loss", test_loss_avg)
+        self.summary_writer.add_scalar("segmenter_test_accuracy", test_accuracy)
+        self.summary_writer.add_scalar("segmenter_test_f1_score", test_f1_score)
+        self.summary_writer.add_scalar("segmenter_test_auroc", test_auroc)
+        self.summary_writer.add_scalar("segmenter_test_recall", test_recall)
+
+        print(
+            f"""test status
+                Average Test Loss: {test_loss_avg}
+                Test Accuracy: {test_accuracy}
+                Test F1 Score: {test_f1_score}
+                Test AUROC: {test_auroc}
+                Test Recall: {test_recall}
+            """
+        )
+
+        viz_count = 50
+        g = torch.Generator()
+
+        regular_test_indices_to_viz = torch.randperm(len(dataset.test_dataset.datasets[0]), generator=g)[:viz_count]
+        regular_test_subset = Subset(dataset.test_dataset.datasets[0], regular_test_indices_to_viz)
+        regular_test_sampled = DataLoader(regular_test_subset, batch_size=viz_count)
+
+        irregular_test_indices_to_viz = torch.randperm(len(dataset.test_dataset.datasets[1]), generator=g)[:viz_count]
+        irregular_test_subset = Subset(dataset.test_dataset.datasets[1], irregular_test_indices_to_viz)
+        irregular_test_sampled = DataLoader(irregular_test_subset, batch_size=viz_count)
+
+        irregular_test_batch = [data_to_infer for data_to_infer in irregular_test_sampled][0]
+        regular_test_batch = [data_to_infer for data_to_infer in regular_test_sampled][0]
+
+        irregular_test_segmentation_indices = model.infer(irregular_test_batch, use_filtering=True)
+        regular_test_segmentation_indices = model.infer(regular_test_batch, use_filtering=True)
+
+        figures = []
+
+        figures += self._get_figures_to_evaluate_qualitatively(
+            irregular_test_batch, irregular_test_segmentation_indices
+        )
+        figures += self._get_figures_to_evaluate_qualitatively(regular_test_batch, regular_test_segmentation_indices)
+
+        merged_image = self._merge_figures(figures)
+
+        self.summary_writer.add_image("qualitative_evaluation_test", np.array(merged_image), 0, dataformats="HWC")
+
+        self.model.train()
 
 
 if __name__ == "__main__":
@@ -1033,4 +1117,6 @@ if __name__ == "__main__":
         use_geometric_loss=Configuration.USE_GEOMETRIC_LOSS,
         use_label_smoothing=Configuration.USE_LABEL_SMOOTHING,
     )
+
     polygon_segmenter_trainer.train()
+    polygon_segmenter_trainer.test()

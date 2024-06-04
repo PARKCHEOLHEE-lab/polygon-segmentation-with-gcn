@@ -109,7 +109,7 @@ class PolygonGraphDataset(Dataset):
 
         (
             self.train_dataloader,
-            self.validation_dataloder,
+            self.validation_dataloader,
             self.test_dataloader,
             self.train_dataset,
             self.validation_dataset,

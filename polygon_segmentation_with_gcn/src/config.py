@@ -63,6 +63,9 @@ class DataConfiguration:
     TEST_SPLIT_RATIO = 0.10
     SPLIT_RATIOS = [TRAIN_SPLIT_RATIO, VALIDATION_SPLIT_RATIO, TEST_SPLIT_RATIO]
 
+    DPI = 100
+    FIGSIZE = (5, 5)
+
 
 class ModelConfiguration:
     EPOCH = 100
@@ -77,7 +80,7 @@ class ModelConfiguration:
 
     TOPK = 10
     AREA_THRESHOLD = 0.15
-    CONNECTION_THRESHOLD = 0.50
+    CONNECTION_THRESHOLD = 0.70
 
     NEGATIVE_SAMPLE_MULTIPLIER = 3
     POSITIVE_SAMPLE_MULTIPLIER = 1
