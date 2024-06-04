@@ -39,23 +39,19 @@ class DatasetHelper:
                 del data[edi]
                 continue
 
-            # Dummy label
             if None in each_data.edge_label_index_only.flatten():
-                edge_label_index_only = np.array([[0, 1], [1, 2]])
+                edge_label_index_only = np.array([[], []])
                 edge_label_index_only = np.repeat(
                     edge_label_index_only, Configuration.POSITIVE_SAMPLE_MULTIPLIER, axis=1
                 )
 
             else:
                 edge_label_index_only = each_data.edge_label_index_only
-                if edge_label_index_only.shape[1] == 1:
-                    edge_label_index_only = np.hstack([edge_label_index_only, np.array([[0], [1]])])
-
                 edge_label_index_only = np.repeat(
                     edge_label_index_only, Configuration.POSITIVE_SAMPLE_MULTIPLIER, axis=1
                 )
 
-            assert edge_label_index_only.shape == (2, Configuration.POSITIVE_SAMPLE_MULTIPLIER * 2)
+            assert edge_label_index_only.shape[0] == 2
 
             each_data.edge_label_index_only = torch.tensor(edge_label_index_only).to(Configuration.DEVICE)
 

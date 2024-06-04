@@ -228,16 +228,11 @@ class PolygonSegmenter(nn.Module):
 
         return decoded
 
-    @staticmethod
-    def _train_predictor(predictor, each_graph, each_encoded_features):
+    def _train_predictor(self, predictor, each_graph, each_encoded_features):
         unique_edge_index = each_graph.edge_label_index_only.unique(dim=1).t().tolist()
 
         k_predicted = predictor(each_encoded_features.mean(dim=0).unsqueeze(dim=0))
-        k_target = 2
-        if [0, 1] in unique_edge_index:
-            k_target -= 1
-        if [1, 2] in unique_edge_index:
-            k_target -= 1
+        k_target = len(unique_edge_index)
 
         return k_predicted, k_target
 
