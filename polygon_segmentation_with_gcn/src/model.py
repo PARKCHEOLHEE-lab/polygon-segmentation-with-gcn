@@ -186,7 +186,11 @@ class PolygonSegmenter(nn.Module):
 
         self.use_skip_connection = use_skip_connection
         self.out_channels = out_channels
+
         self.conv_type = conv_type
+        self.encoder_activation = encoder_activation
+        self.decoder_activation = decoder_activation
+        self.predictor_activation = predictor_activation
 
         self.to(Configuration.DEVICE)
 
@@ -267,7 +271,7 @@ class PolygonSegmenter(nn.Module):
 
         # Sample negative edges
         negative_edge_index = negative_sampling(
-            edge_index=data.edge_index,
+            edge_index=data.edge_label_index_only,
             num_nodes=data.num_nodes,
             num_neg_samples=int(data.edge_label_index_only.shape[1] * Configuration.NEGATIVE_SAMPLE_MULTIPLIER),
             method="sparse",
@@ -400,6 +404,10 @@ class PolygonSegmenterTrainer:
         self.summary_writer = SummaryWriter(log_dir=self.log_dir)
 
         self.summary_writer.add_text("conv_type", self.model.conv_type)
+        self.summary_writer.add_text("encoder_activation", str(self.model.encoder_activation))
+        self.summary_writer.add_text("decoder_activation", str(self.model.decoder_activation))
+        self.summary_writer.add_text("predictor_activation", str(self.model.predictor_activation))
+
         for key, value in Configuration():
             self.summary_writer.add_text(key, str(value))
 
@@ -776,12 +784,12 @@ class PolygonSegmenterTrainer:
         if self.use_geometric_loss:
             ray.init()
 
-        best_validation_loss = torch.inf
+        best_recall = -torch.inf
         start = 1
 
         if len(self.states) > 0:
             start = self.states["epoch"] + 1
-            best_validation_loss = self.states["best_loss"]
+            best_recall = self.states["best_recall"]
 
         for epoch in range(start, Configuration.EPOCH + 1):
             train_loss_avg = self._train_each_epoch(
@@ -820,14 +828,14 @@ class PolygonSegmenterTrainer:
 
             self.segmenter_lr_scheduler.step(validation_loss_avg)
 
-            if validation_loss_avg < best_validation_loss:
-                print("saving states...")
-
-                best_validation_loss = validation_loss_avg
+            if validation_recall > best_recall:
+                best_loss = validation_loss_avg
+                best_recall = validation_recall
 
                 states = {
                     "epoch": epoch,
-                    "best_loss": best_validation_loss,
+                    "best_loss": best_loss,
+                    "best_recall": best_recall,
                     "segmenter_state_dict": self.model.state_dict(),
                     "predictor_state_dict": self.model.k_predictor.state_dict(),
                     "segmenter_optimizer_state_dict": self.segmenter_optimizer.state_dict(),
@@ -872,7 +880,7 @@ if __name__ == "__main__":
 
     dataset = PolygonGraphDataset()
     model = PolygonSegmenter(
-        conv_type=Configuration.GATCONV,
+        conv_type=Configuration.GRAPHCONV,
         in_channels=dataset.regular_polygons[0].x.shape[1],
         hidden_channels=Configuration.HIDDEN_CHANNELS,
         out_channels=Configuration.OUT_CHANNELS,
