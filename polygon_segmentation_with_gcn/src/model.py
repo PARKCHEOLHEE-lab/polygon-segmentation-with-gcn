@@ -422,12 +422,10 @@ class PolygonSegmenterTrainer:
 
     def _set_loss_function(self):
         self.segmenter_loss_function = nn.BCELoss(
-            weight=torch.tensor(Configuration.BCE_LOSS_WEIGHT).to(Configuration.DEVICE)
+            weight=torch.tensor(Configuration.BCE_LOSS_WEIGHT).to(Configuration.DEVICE),
         )
 
-        self.predictor_loss_function = nn.CrossEntropyLoss(
-            weight=torch.tensor(Configuration.CROSS_ENTROPY_LOSS_WEIGHT).to(Configuration.DEVICE)
-        )
+        self.predictor_loss_function = nn.CrossEntropyLoss(weight=None, reduction="none")
 
         self.geometric_loss_function = GeometricLoss(weight=Configuration.GEOMETRIC_LOSS_WEIGHT)
 
@@ -462,6 +460,12 @@ class PolygonSegmenterTrainer:
             labels = (1 - Configuration.LABEL_SMOOTHING_FACTOR) * labels + Configuration.LABEL_SMOOTHING_FACTOR / 2
 
         return labels
+
+    def _compute_focal_loss(self, loss: torch.Tensor):
+        pt = torch.exp(-loss)
+        focal_loss = Configuration.FOCAL_LOSS_ALPHA * (1 - pt) ** Configuration.FOCAL_LOSS_GAMMA * loss
+
+        return focal_loss.mean()
 
     @runtime_calculator
     def _train_each_epoch(
@@ -505,6 +509,7 @@ class PolygonSegmenterTrainer:
                 train_geometric_loss = geometric_loss_function(data_to_train, train_infered).item()
 
             train_predictor_loss = predictor_loss_function(train_k_predictions, train_k_targets)
+            train_predictor_loss = self._compute_focal_loss(train_predictor_loss)
 
             train_total_loss = train_segmenter_loss + train_predictor_loss + train_geometric_loss
 
@@ -572,6 +577,7 @@ class PolygonSegmenterTrainer:
                 validation_geometric_loss = geometric_loss_function(data_to_validate, validation_infered).item()
 
             validation_predictor_loss = predictor_loss_function(validation_k_predictions, validation_k_targets)
+            validation_predictor_loss = self._compute_focal_loss(validation_predictor_loss)
 
             validation_total_loss = validation_segmenter_loss + validation_predictor_loss + validation_geometric_loss
 

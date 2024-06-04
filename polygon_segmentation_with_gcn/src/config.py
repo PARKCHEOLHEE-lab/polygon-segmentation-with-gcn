@@ -90,8 +90,10 @@ class ModelConfiguration:
 
     BCE_LOSS_WEIGHT = 1.0
     GEOMETRIC_LOSS_WEIGHT = 10.0
-    CROSS_ENTROPY_LOSS_WEIGHT = [0.5, 0.8, 3.0]
     LABEL_SMOOTHING_FACTOR = 0.1
+
+    FOCAL_LOSS_ALPHA = 0.25
+    FOCAL_LOSS_GAMMA = 2.0
 
     GCNCONV = "GCNConv"
     GRAPHCONV = "GraphConv"
