@@ -22,7 +22,13 @@ class DatasetHelper:
     def __init__(self):
         pass
 
-    def _tidy_all_data(self, data: List[Data]):
+    def _tidy_all_data(self, data: List[Data]) -> None:
+        """Tidy all data and insert additional data
+
+        Args:
+            data (List[Data]): data
+        """
+
         edi = 0
         while edi < len(data):
             each_data = data[edi]
@@ -119,6 +125,17 @@ class PolygonGraphDataset(Dataset):
     def _get_dataloaders(
         self, regular_polygons: RegularPolygonDataset, irregular_polygons: IrregularPolygonDataset, slicer: int
     ) -> Tuple[DataLoader]:
+        """Generate all dataloaders
+
+        Args:
+            regular_polygons (RegularPolygonDataset): regular polygons
+            irregular_polygons (IrregularPolygonDataset): irregular polygons
+            slicer (int): slicer
+
+        Returns:
+            Tuple[DataLoader]: all dataloaders
+        """
+
         regular_train, regular_validation, regular_test = random_split(regular_polygons, Configuration.SPLIT_RATIOS)
         irregular_train, irregular_validation, irregular_test = random_split(
             irregular_polygons, Configuration.SPLIT_RATIOS
