@@ -7,6 +7,7 @@ if os.path.abspath(os.path.join(__file__, "../../")) not in sys.path:
 if os.path.abspath(os.path.join(__file__, "../../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(__file__, "../../../")))
 
+import shapely
 import torch
 import torch.nn as nn
 import datetime
@@ -15,7 +16,7 @@ import matplotlib.pyplot as plt
 import ray
 
 from PIL import Image
-from shapely import geometry
+from shapely import geometry, ops
 from typing import List, Tuple
 from tqdm import tqdm
 from torch_geometric.data import Batch, Data
@@ -313,18 +314,20 @@ class PolygonSegmenter(nn.Module):
                 connection_probabilities,
             )
 
-            topk_indices = torch.topk(
-                connection_probabilities, k=self.k_predictor(encoded.mean(dim=0).unsqueeze(dim=0)).argmax().item()
-            ).indices
+            predicted_k = self.k_predictor(encoded.mean(dim=0).unsqueeze(dim=0)).argmax().item()
+            top_10_indices = torch.topk(connection_probabilities, k=Configuration.TOPK).indices
 
-            connected_pairs = node_pairs.t()[topk_indices].t()
+            connected_pairs = node_pairs.t()[top_10_indices].t()
 
             if use_filtering:
                 each_polygon = geometry.Polygon(each_data.x[:, :2].tolist())
 
                 filtered_pairs = [[], []]
-                for pair in connected_pairs:
-                    if bool(node_pair[0] == node_pair[1]):
+                for pair in connected_pairs.t():
+                    if len(filtered_pairs[0]) == predicted_k:
+                        break
+
+                    if bool(pair[0] == pair[1]):
                         continue
                     if pair.tolist() in each_data.edge_index.t().tolist():
                         continue
@@ -349,10 +352,26 @@ class PolygonSegmenter(nn.Module):
                     ):
                         continue
 
+                    exterior_with_segment = ops.unary_union([segment] + DataCreatorHelper.explode_polygon(each_polygon))
+
+                    exterior_with_segment = shapely.set_precision(
+                        exterior_with_segment, Configuration.TOLERANCE_LARGE, mode="valid_output"
+                    )
+
+                    segmented = list(ops.polygonize(exterior_with_segment))
+
+                    if not all(s.area > Configuration.AREA_THRESHOLD for s in segmented):
+                        continue
+
                     filtered_pairs[0].append(pair[0].item())
                     filtered_pairs[1].append(pair[1].item())
 
-                connected_pairs = torch.tensor(filtered_pairs).to(Configuration.DEVICE)
+                connected_pairs = torch.tensor(filtered_pairs)[:, :predicted_k].to(Configuration.DEVICE)
+
+            else:
+                connected_pairs = connected_pairs[:, :predicted_k]
+
+            assert connected_pairs.shape == (2, predicted_k)
 
             infered.append(connected_pairs)
 
@@ -722,8 +741,8 @@ class PolygonSegmenterTrainer:
         irregular_train_batch = [data_to_infer for data_to_infer in irregular_train_sampled][0]
         regular_train_batch = [data_to_infer for data_to_infer in regular_train_sampled][0]
 
-        irregular_train_segmentation_indices = model.infer(irregular_train_batch, use_filtering=False)
-        regular_train_segmentation_indices = model.infer(regular_train_batch, use_filtering=False)
+        irregular_train_segmentation_indices = model.infer(irregular_train_batch, use_filtering=True)
+        regular_train_segmentation_indices = model.infer(regular_train_batch, use_filtering=True)
 
         figures = []
 
@@ -745,8 +764,8 @@ class PolygonSegmenterTrainer:
         irregular_validation_batch = [data_to_infer for data_to_infer in irregular_validation_sampled][0]
         regular_validation_batch = [data_to_infer for data_to_infer in regular_validation_sampled][0]
 
-        irregular_validation_segmentation_indices = model.infer(irregular_validation_batch, use_filtering=False)
-        regular_validation_segmentation_indices = model.infer(regular_validation_batch, use_filtering=False)
+        irregular_validation_segmentation_indices = model.infer(irregular_validation_batch, use_filtering=True)
+        regular_validation_segmentation_indices = model.infer(regular_validation_batch, use_filtering=True)
 
         figures += self._get_figures_to_evaluate_qualitatively(
             irregular_validation_batch, irregular_validation_segmentation_indices
