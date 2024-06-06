@@ -415,7 +415,34 @@ class PolygonSegmenter(nn.Module):
 
                     segmented = list(ops.polygonize(exterior_with_segment))
 
-                    if not all(s.area > Configuration.AREA_THRESHOLD for s in segmented):
+                    if len(segmented) != predicted_k + 1:
+                        continue
+
+                    segment_coords = np.array(exterior_with_segment.geoms[0].coords)
+
+                    is_satisfied = True
+                    for segmented_part in segmented:
+                        if segmented_part.area < each_polygon.area * Configuration.AREA_THRESHOLD:
+                            is_satisfied = False
+                            break
+
+                        segmented_part_degrees = DataCreatorHelper.compute_polyon_inner_degrees(segmented_part)
+                        start_index = np.isclose(np.array(segmented_part.exterior.coords), segment_coords[0]).nonzero()[
+                            0
+                        ][0]
+                        end_index = np.isclose(np.array(segmented_part.exterior.coords), segment_coords[1]).nonzero()[
+                            0
+                        ][0]
+
+                        if segmented_part_degrees[start_index] < Configuration.DEGREE_THRESHOLD:
+                            is_satisfied = False
+                            break
+
+                        if segmented_part_degrees[end_index] < Configuration.DEGREE_THRESHOLD:
+                            is_satisfied = False
+                            break
+
+                    if not is_satisfied:
                         continue
 
                     filtered_pairs[0].append(pair[0].item())
@@ -801,6 +828,7 @@ class PolygonSegmenterTrainer:
             annotation = f"""
                 loc: {int(each_data.loc)}
                 name: {each_data.name}
+                predicted k : {each_segmentation_indices.shape[1]}
             """
 
             plt.axis([-2.0, 2.0, -2.0, 2.0])
@@ -815,7 +843,7 @@ class PolygonSegmenterTrainer:
                 fontsize=8,
             )
 
-            plt.legend()
+            plt.legend(fontsize="small")
 
             figures.append(figure)
 
