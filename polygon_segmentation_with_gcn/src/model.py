@@ -1094,19 +1094,23 @@ class PolygonSegmenterTrainer:
         viz_count = 50
         g = torch.Generator()
 
-        regular_test_indices_to_viz = torch.randperm(len(dataset.test_dataset.datasets[0]), generator=g)[:viz_count]
-        regular_test_subset = Subset(dataset.test_dataset.datasets[0], regular_test_indices_to_viz)
+        regular_test_indices_to_viz = torch.randperm(len(self.dataset.test_dataset.datasets[0]), generator=g)[
+            :viz_count
+        ]
+        regular_test_subset = Subset(self.dataset.test_dataset.datasets[0], regular_test_indices_to_viz)
         regular_test_sampled = DataLoader(regular_test_subset, batch_size=viz_count)
 
-        irregular_test_indices_to_viz = torch.randperm(len(dataset.test_dataset.datasets[1]), generator=g)[:viz_count]
-        irregular_test_subset = Subset(dataset.test_dataset.datasets[1], irregular_test_indices_to_viz)
+        irregular_test_indices_to_viz = torch.randperm(len(self.dataset.test_dataset.datasets[1]), generator=g)[
+            :viz_count
+        ]
+        irregular_test_subset = Subset(self.dataset.test_dataset.datasets[1], irregular_test_indices_to_viz)
         irregular_test_sampled = DataLoader(irregular_test_subset, batch_size=viz_count)
 
         irregular_test_batch = [data_to_infer for data_to_infer in irregular_test_sampled][0]
         regular_test_batch = [data_to_infer for data_to_infer in regular_test_sampled][0]
 
-        irregular_test_segmentation_indices = model.infer(irregular_test_batch, use_filtering=True)
-        regular_test_segmentation_indices = model.infer(regular_test_batch, use_filtering=True)
+        irregular_test_segmentation_indices = self.model.infer(irregular_test_batch, use_filtering=True)
+        regular_test_segmentation_indices = self.model.infer(regular_test_batch, use_filtering=True)
 
         figures = []
 
@@ -1120,31 +1124,3 @@ class PolygonSegmenterTrainer:
         self.summary_writer.add_image("qualitative_evaluation_test", np.array(merged_image), 0, dataformats="HWC")
 
         self.model.train()
-
-
-if __name__ == "__main__":
-    Configuration.set_seed()
-
-    dataset = PolygonGraphDataset()
-    model = PolygonSegmenter(
-        conv_type=Configuration.GRAPHCONV,
-        in_channels=dataset.regular_polygons[0].x.shape[1],
-        hidden_channels=Configuration.HIDDEN_CHANNELS,
-        out_channels=Configuration.OUT_CHANNELS,
-        encoder_activation=Configuration.ENCODER_ACTIVATION.to(Configuration.DEVICE),
-        decoder_activation=Configuration.DECODER_ACTIVATION.to(Configuration.DEVICE),
-        predictor_activation=Configuration.PREDICTOR_ACTIVATION.to(Configuration.DEVICE),
-        use_skip_connection=Configuration.USE_SKIP_CONNECTION,
-    )
-
-    polygon_segmenter_trainer = PolygonSegmenterTrainer(
-        dataset=dataset,
-        model=model,
-        is_debug_mode=True,
-        pre_trained_path=None,
-        use_geometric_loss=Configuration.USE_GEOMETRIC_LOSS,
-        use_label_smoothing=Configuration.USE_LABEL_SMOOTHING,
-    )
-
-    polygon_segmenter_trainer.train()
-    polygon_segmenter_trainer.test()
