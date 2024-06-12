@@ -830,7 +830,6 @@ class PolygonSegmenterTrainer:
             annotation = f"""
                 loc: {int(each_data.loc)}
                 name: {each_data.name}
-                predicted k : {each_segmentation_indices.shape[1]}
             """
 
             plt.axis([-2.0, 2.0, -2.0, 2.0])
