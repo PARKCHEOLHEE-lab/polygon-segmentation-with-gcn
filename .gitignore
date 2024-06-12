@@ -1,5 +1,4 @@
 debugvisualizer/
-runs/
 __pycache__
 
 *.dbf
@@ -7,3 +6,7 @@ __pycache__
 *.fix
 *.prj
 *.shx
+
+events.*
+
+!polygon_segmentation_with_gcn/runs/2024-06-06_08-42-18/states/states.pth
