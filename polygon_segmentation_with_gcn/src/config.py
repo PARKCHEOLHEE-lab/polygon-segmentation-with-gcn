@@ -68,7 +68,7 @@ class DataConfiguration:
 
 
 class ModelConfiguration:
-    EPOCH = 100
+    EPOCH = 500
 
     DECODER_DROPOUT_RATE = 0.1
     ENCODER_DROPOUT_RATE = 0.1
@@ -78,8 +78,8 @@ class ModelConfiguration:
     SEGMENTER_LEARNING_RATE = 0.00002
     PREDICTOR_LEARNING_RATE = 0.00002
 
-    TOPK = 5
-    AREA_THRESHOLD = 0.20
+    TOPK = 7
+    AREA_THRESHOLD = 0.07
     CONNECTION_THRESHOLD = 0.55
     DEGREE_THRESHOLD = 55
 
