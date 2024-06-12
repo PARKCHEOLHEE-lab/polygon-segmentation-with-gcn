@@ -33,6 +33,8 @@ from polygon_segmentation_with_gcn.src.config import Configuration
 from polygon_segmentation_with_gcn.src.dataset import PolygonGraphDataset
 from polygon_segmentation_with_gcn.src.data_creator import DataCreatorHelper
 
+from IPython.display import clear_output
+
 
 class GeometricLoss(nn.Module):
     def __init__(self, weight: float = 1.0):
@@ -1049,6 +1051,8 @@ class PolygonSegmenterTrainer:
                     Validation Recall: {validation_recall}
                 """
             )
+
+            clear_output(wait=True)
 
     def test(self) -> None:
         """Test segmenter model"""
