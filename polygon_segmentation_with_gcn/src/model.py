@@ -1053,8 +1053,11 @@ class PolygonSegmenterTrainer:
 
             clear_output(wait=True)
 
-    def test(self) -> None:
+    def test(self, seed: int = None, test_name: str = None) -> None:
         """Test segmenter model"""
+
+        if test_name is None:
+            test_name = "qualitative_evaluation_test"
 
         (
             test_loss_avg,
@@ -1078,11 +1081,11 @@ class PolygonSegmenterTrainer:
             is_test=True,
         )
 
-        self.summary_writer.add_scalar("segmenter_test_loss", test_loss_avg)
-        self.summary_writer.add_scalar("segmenter_test_accuracy", test_accuracy)
-        self.summary_writer.add_scalar("segmenter_test_f1_score", test_f1_score)
-        self.summary_writer.add_scalar("segmenter_test_auroc", test_auroc)
-        self.summary_writer.add_scalar("segmenter_test_recall", test_recall)
+        self.summary_writer.add_scalar(f"{test_name}_segmenter_test_loss", test_loss_avg)
+        self.summary_writer.add_scalar(f"{test_name}_segmenter_test_accuracy", test_accuracy)
+        self.summary_writer.add_scalar(f"{test_name}_segmenter_test_f1_score", test_f1_score)
+        self.summary_writer.add_scalar(f"{test_name}_segmenter_test_auroc", test_auroc)
+        self.summary_writer.add_scalar(f"{test_name}_segmenter_test_recall", test_recall)
 
         print(
             f"""test status
@@ -1096,6 +1099,9 @@ class PolygonSegmenterTrainer:
 
         viz_count = 50
         g = torch.Generator()
+
+        if isinstance(seed, int):
+            g.manual_seed(seed)
 
         regular_test_indices_to_viz = torch.randperm(len(self.dataset.test_dataset.datasets[0]), generator=g)[
             :viz_count
@@ -1124,6 +1130,4 @@ class PolygonSegmenterTrainer:
 
         merged_image = self._merge_figures(figures)
 
-        self.summary_writer.add_image("qualitative_evaluation_test", np.array(merged_image), 0, dataformats="HWC")
-
-        self.model.train()
+        self.summary_writer.add_image(test_name, np.array(merged_image), 0, dataformats="HWC")
