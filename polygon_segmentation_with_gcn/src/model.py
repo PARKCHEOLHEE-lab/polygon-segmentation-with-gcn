@@ -37,12 +37,24 @@ from IPython.display import clear_output
 
 
 class GeometricLoss(nn.Module):
-    def __init__(self, weight: float = 1.0):
+    def __init__(self, weight: float = 1.0, use_ray: bool = False):
         super().__init__()
         self.weight = weight
+        self.use_ray = use_ray
+        self.compute_function = self.select_computation_function()
+
+    def select_computation_function(self):
+        if self.use_ray:
+
+            @ray.remote
+            def compute_geometric_loss_with_ray(each_data: Data, each_segmentation_indices: torch.Tensor) -> float:
+                return self.compute_geometric_loss(each_data, each_segmentation_indices)
+
+            return compute_geometric_loss_with_ray
+
+        return self.compute_geometric_loss
 
     @staticmethod
-    @ray.remote
     def compute_geometric_loss(each_data: Data, each_segmentation_indices: torch.Tensor) -> float:
         """Compute geometric loss for each graph
 
@@ -70,7 +82,7 @@ class GeometricLoss(nn.Module):
         ]
 
         label_edges = DataCreatorHelper.connect_polygon_segments_by_indices(
-            each_polygon, each_data.edge_label_index_only.unique(dim=1).detach().cpu().numpy()
+            each_polygon, each_data.edge_label_index_only.unique(dim=1).detach().cpu().numpy().astype(int)
         )
 
         label_edges = [e for e in label_edges if e.length > 0]
@@ -95,7 +107,7 @@ class GeometricLoss(nn.Module):
 
         intersection = label_edge_union_buffered.intersection(predicted_edges_union_buffered)
 
-        geometric_loss = intersection.area**2
+        geometric_loss = intersection.area / (label_edge_union_buffered.area + Configuration.TOLERANCE)
         geometric_loss *= -1
 
         return geometric_loss
@@ -111,11 +123,17 @@ class GeometricLoss(nn.Module):
             float: Geometric loss
         """
 
-        tasks = [
-            self.compute_geometric_loss.remote(data[i].to("cpu"), infered[i].to("cpu")) for i in range(data.num_graphs)
-        ]
+        if self.use_ray:
+            tasks = [
+                self.compute_function.remote(data[i].to("cpu"), infered[i].to("cpu")) for i in range(data.num_graphs)
+            ]
 
-        all_geometric_losses = ray.get(tasks)
+            all_geometric_losses = ray.get(tasks)
+
+        else:
+            all_geometric_losses = [
+                self.compute_function(data[i].to("cpu"), infered[i].to("cpu")) for i in range(data.num_graphs)
+            ]
 
         all_geometric_losses = torch.tensor(all_geometric_losses)
         geometric_loss = all_geometric_losses.sum() / all_geometric_losses.shape[0]
@@ -471,6 +489,7 @@ class PolygonSegmenterTrainer:
         is_debug_mode: bool = False,
         use_geometric_loss: bool = False,
         use_label_smoothing: bool = False,
+        use_ray: bool = False,
     ):
         self.dataset = dataset
         self.model = model
@@ -478,6 +497,7 @@ class PolygonSegmenterTrainer:
         self.is_debug_mode = is_debug_mode
         self.use_geometric_loss = use_geometric_loss
         self.use_label_smoothing = use_label_smoothing
+        self.use_ray = use_ray
 
         if self.is_debug_mode:
             add_debugvisualizer(globals())
@@ -532,7 +552,7 @@ class PolygonSegmenterTrainer:
 
         self.predictor_loss_function = nn.CrossEntropyLoss(weight=None, reduction="none")
 
-        self.geometric_loss_function = GeometricLoss(weight=Configuration.GEOMETRIC_LOSS_WEIGHT)
+        self.geometric_loss_function = GeometricLoss(weight=Configuration.GEOMETRIC_LOSS_WEIGHT, use_ray=self.use_ray)
 
     def _set_optimizer(self) -> None:
         """Set all optimizers"""
@@ -630,6 +650,7 @@ class PolygonSegmenterTrainer:
         """
 
         train_losses = []
+        train_geometric_losses = []
         for data_to_train in tqdm(dataset.train_dataloader, desc=f"Training... epoch: {epoch}/{Configuration.EPOCH}"):
             train_decoded, train_k_predictions, train_k_targets = model(data_to_train)
 
@@ -639,8 +660,14 @@ class PolygonSegmenterTrainer:
 
             train_geometric_loss = 0
             if use_geometric_loss:
-                train_infered = model.infer(data_to_train, use_filtering=False)
-                train_geometric_loss = geometric_loss_function(data_to_train, train_infered).item()
+                data_to_train_sampled = Batch.from_data_list(
+                    data_to_train[torch.randperm(len(data_to_train))[: Configuration.GEOMETRIC_LOSS_SAMPLE_SIZE]]
+                )
+
+                train_infered = model.infer(data_to_train_sampled, use_filtering=True)
+                train_geometric_loss = geometric_loss_function(data_to_train_sampled, train_infered).item()
+
+            train_geometric_losses.append(train_geometric_loss)
 
             train_predictor_loss = predictor_loss_function(train_k_predictions, train_k_targets)
             train_predictor_loss = self._compute_focal_loss(train_predictor_loss)
@@ -655,8 +682,9 @@ class PolygonSegmenterTrainer:
             predictor_optimizer.step()
 
         train_loss_avg = sum(train_losses) / len(train_losses)
+        train_geometric_loss_avg = sum(train_geometric_losses) / len(train_geometric_losses)
 
-        return train_loss_avg
+        return train_loss_avg, train_geometric_loss_avg
 
     @torch.no_grad()
     def _evaluate_each_epoch(
@@ -707,6 +735,7 @@ class PolygonSegmenterTrainer:
             dataloader_to_validate = dataset.test_dataloader
 
         validation_losses = []
+        validation_geometric_losses = []
         for data_to_validate in tqdm(
             dataloader_to_validate, desc=f"Evaluating... epoch: {epoch}/{Configuration.EPOCH}"
         ):
@@ -718,8 +747,13 @@ class PolygonSegmenterTrainer:
 
             validation_geometric_loss = 0
             if use_geometric_loss:
-                validation_infered = model.infer(data_to_validate, use_filtering=False)
-                validation_geometric_loss = geometric_loss_function(data_to_validate, validation_infered).item()
+                data_to_validate_sampled = Batch.from_data_list(
+                    data_to_validate[torch.randperm(len(data_to_validate))[: Configuration.GEOMETRIC_LOSS_SAMPLE_SIZE]]
+                )
+                validation_infered = model.infer(data_to_validate_sampled, use_filtering=True)
+                validation_geometric_loss = geometric_loss_function(data_to_validate_sampled, validation_infered).item()
+
+            validation_geometric_losses.append(validation_geometric_loss)
 
             validation_predictor_loss = predictor_loss_function(validation_k_predictions, validation_k_targets)
             validation_predictor_loss = self._compute_focal_loss(validation_predictor_loss)
@@ -754,13 +788,21 @@ class PolygonSegmenterTrainer:
         model.train()
 
         validation_loss_avg = sum(validation_losses) / len(validation_losses)
+        validation_geometric_loss_avg = sum(validation_geometric_losses) / len(validation_geometric_losses)
 
         validation_accuracy = accuracy_metric.compute().item()
         validation_f1_score = f1_score_metric.compute().item()
         validation_auroc = auroc_metric.compute().item()
         validation_recall = recall_metric.compute().item()
 
-        return validation_loss_avg, validation_accuracy, validation_f1_score, validation_auroc, validation_recall
+        return (
+            validation_loss_avg,
+            validation_accuracy,
+            validation_f1_score,
+            validation_auroc,
+            validation_recall,
+            validation_geometric_loss_avg,
+        )
 
     def _get_figures_to_evaluate_qualitatively(self, batch: Batch, indices: List[torch.Tensor]) -> List[plt.Figure]:
         """Get figures to evaluate qualitatively
@@ -953,7 +995,7 @@ class PolygonSegmenterTrainer:
     def train(self) -> None:
         """Train the models"""
 
-        if self.use_geometric_loss:
+        if self.use_ray and self.use_geometric_loss:
             ray.init()
 
         best_validation_loss = torch.inf
@@ -964,7 +1006,7 @@ class PolygonSegmenterTrainer:
             best_validation_loss = self.states["best_validation_loss"]
 
         for epoch in range(start, Configuration.EPOCH + 1):
-            train_loss_avg = self._train_each_epoch(
+            train_loss_avg, train_geometric_loss_avg = self._train_each_epoch(
                 self.dataset,
                 self.model,
                 self.segmenter_loss_function,
@@ -983,6 +1025,7 @@ class PolygonSegmenterTrainer:
                 validation_f1_score,
                 validation_auroc,
                 validation_recall,
+                validation_geometric_loss_avg,
             ) = self._evaluate_each_epoch(
                 self.dataset,
                 self.model,
@@ -1031,7 +1074,10 @@ class PolygonSegmenterTrainer:
                 torch.save(states, self.states_path)
 
             self.summary_writer.add_scalar("segmenter_train_loss", train_loss_avg, epoch)
+            self.summary_writer.add_scalar("segmenter_train_geometric_loss", train_geometric_loss_avg, epoch)
             self.summary_writer.add_scalar("segmenter_validation_loss", validation_loss_avg, epoch)
+            self.summary_writer.add_scalar("segmenter_validation_geometric_loss", validation_geometric_loss_avg, epoch)
+
             self.summary_writer.add_scalar("segmenter_validation_accuracy", validation_accuracy, epoch)
             self.summary_writer.add_scalar("segmenter_validation_f1_score", validation_f1_score, epoch)
             self.summary_writer.add_scalar("segmenter_validation_auroc", validation_auroc, epoch)
@@ -1043,7 +1089,9 @@ class PolygonSegmenterTrainer:
                 f"""training status
                     Epoch: {epoch}th
                     Average Train Loss: {train_loss_avg}
+                    Average Train Geometric Loss: {train_geometric_loss_avg}
                     Average Validation Loss: {validation_loss_avg}
+                    Average Validation Geometric Loss: {validation_geometric_loss_avg}
                     Validation Accuracy: {validation_accuracy}
                     Validation F1 Score: {validation_f1_score}
                     Validation AUROC: {validation_auroc}

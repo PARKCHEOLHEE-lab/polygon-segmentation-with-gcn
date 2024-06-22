@@ -96,6 +96,7 @@ class ModelConfiguration:
 
     BCE_LOSS_WEIGHT = 1.0
     GEOMETRIC_LOSS_WEIGHT = 10.0
+    GEOMETRIC_LOSS_SAMPLE_SIZE = 4
     LABEL_SMOOTHING_FACTOR = 0.1
 
     FOCAL_LOSS_ALPHA = 0.25
@@ -113,9 +114,10 @@ class ModelConfiguration:
     DECODER_ACTIVATION = torch.nn.ReLU()
     PREDICTOR_ACTIVATION = torch.nn.ReLU()
 
-    USE_GEOMETRIC_LOSS = False
+    USE_GEOMETRIC_LOSS = True
     USE_LABEL_SMOOTHING = True
     USE_SKIP_CONNECTION = True
+    USE_RAY = False
 
 
 class Configuration(DataConfiguration, ModelConfiguration):
