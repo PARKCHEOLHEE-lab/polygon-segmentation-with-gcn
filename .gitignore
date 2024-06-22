@@ -8,5 +8,5 @@ __pycache__
 *.shx
 
 polygon_segmentation_with_gcn/runs/*
-!polygon_segmentation_with_gcn/runs/2024-06-06_08-42-18/states/states.pth
+!polygon_segmentation_with_gcn/runs/2024-06-06_08-42-18
 events.*
