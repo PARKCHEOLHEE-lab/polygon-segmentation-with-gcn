@@ -1113,6 +1113,7 @@ class PolygonSegmenterTrainer:
             test_f1_score,
             test_auroc,
             test_recall,
+            test_geometric_loss_avg,
         ) = self._evaluate_each_epoch(
             self.dataset,
             self.model,
