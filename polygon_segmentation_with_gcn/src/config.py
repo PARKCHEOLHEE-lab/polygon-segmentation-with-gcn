@@ -114,7 +114,7 @@ class ModelConfiguration:
     DECODER_ACTIVATION = torch.nn.ReLU()
     PREDICTOR_ACTIVATION = torch.nn.ReLU()
 
-    USE_GEOMETRIC_LOSS = True
+    LOG_GEOMETRIC_LOSS = True
     USE_LABEL_SMOOTHING = True
     USE_SKIP_CONNECTION = True
     USE_RAY = False

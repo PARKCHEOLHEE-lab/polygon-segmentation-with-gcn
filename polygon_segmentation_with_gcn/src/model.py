@@ -487,7 +487,7 @@ class PolygonSegmenterTrainer:
         model: nn.Module,
         pre_trained_path: str = None,
         is_debug_mode: bool = False,
-        use_geometric_loss: bool = False,
+        log_geometric_loss: bool = False,
         use_label_smoothing: bool = False,
         use_ray: bool = False,
     ):
@@ -495,7 +495,7 @@ class PolygonSegmenterTrainer:
         self.model = model
         self.pre_trained_path = pre_trained_path
         self.is_debug_mode = is_debug_mode
-        self.use_geometric_loss = use_geometric_loss
+        self.log_geometric_loss = log_geometric_loss
         self.use_label_smoothing = use_label_smoothing
         self.use_ray = use_ray
 
@@ -627,7 +627,7 @@ class PolygonSegmenterTrainer:
         geometric_loss_function: GeometricLoss,
         segmenter_optimizer: torch.optim.Optimizer,
         predictor_optimizer: torch.optim.Optimizer,
-        use_geometric_loss: bool,
+        log_geometric_loss: bool,
         use_label_smoothing: bool,
         epoch: int,
     ) -> Tuple[float]:
@@ -641,7 +641,7 @@ class PolygonSegmenterTrainer:
             geometric_loss_function (GeometricLoss): geometric loss function
             segmenter_optimizer (torch.optim.Optimizer): segmenter optimizer
             predictor_optimizer (torch.optim.Optimizer): predictor optimizer
-            use_geometric_loss (bool): whether to use geometric loss
+            log_geometric_loss (bool): whether to log geometric loss
             use_label_smoothing (bool): whether to use label smoothing
             epoch (int): each epoch
 
@@ -659,7 +659,7 @@ class PolygonSegmenterTrainer:
             train_segmenter_loss = segmenter_loss_function(train_decoded, train_labels)
 
             train_geometric_loss = 0
-            if use_geometric_loss:
+            if log_geometric_loss:
                 data_to_train_sampled = Batch.from_data_list(
                     data_to_train[torch.randperm(len(data_to_train))[: Configuration.GEOMETRIC_LOSS_SAMPLE_SIZE]]
                 )
@@ -672,7 +672,7 @@ class PolygonSegmenterTrainer:
             train_predictor_loss = predictor_loss_function(train_k_predictions, train_k_targets)
             train_predictor_loss = self._compute_focal_loss(train_predictor_loss)
 
-            train_total_loss = train_segmenter_loss + train_predictor_loss + train_geometric_loss
+            train_total_loss = train_segmenter_loss + train_predictor_loss
 
             train_losses.append(train_total_loss.item())
 
@@ -694,7 +694,7 @@ class PolygonSegmenterTrainer:
         segmenter_loss_function: nn.modules.loss._Loss,
         predictor_loss_function: nn.modules.loss._Loss,
         geometric_loss_function: GeometricLoss,
-        use_geometric_loss: bool,
+        log_geometric_loss: bool,
         use_label_smoothing: bool,
         accuracy_metric: Accuracy,
         f1_score_metric: F1Score,
@@ -711,7 +711,7 @@ class PolygonSegmenterTrainer:
             segmenter_loss_function (nn.modules.loss._Loss): segmenter loss function
             predictor_loss_function (nn.modules.loss._Loss): predictor loss function
             geometric_loss_function (GeometricLoss): geometric loss function
-            use_geometric_loss (bool): whether to use geometric loss
+            log_geometric_loss (bool): whether to log geometric loss
             use_label_smoothing (bool): whether to use label smoothing
             accuracy_metric (Accuracy): accuracy metric
             f1_score_metric (F1Score): f1 score metric
@@ -746,7 +746,7 @@ class PolygonSegmenterTrainer:
             validation_segmenter_loss = segmenter_loss_function(validation_decoded, validation_labels)
 
             validation_geometric_loss = 0
-            if use_geometric_loss:
+            if log_geometric_loss:
                 data_to_validate_sampled = Batch.from_data_list(
                     data_to_validate[torch.randperm(len(data_to_validate))[: Configuration.GEOMETRIC_LOSS_SAMPLE_SIZE]]
                 )
@@ -758,7 +758,7 @@ class PolygonSegmenterTrainer:
             validation_predictor_loss = predictor_loss_function(validation_k_predictions, validation_k_targets)
             validation_predictor_loss = self._compute_focal_loss(validation_predictor_loss)
 
-            validation_total_loss = validation_segmenter_loss + validation_predictor_loss + validation_geometric_loss
+            validation_total_loss = validation_segmenter_loss + validation_predictor_loss
 
             validation_labels_without_smoothing = torch.where(
                 torch.isclose(validation_labels, torch.tensor(1 - Configuration.LABEL_SMOOTHING_FACTOR / 2)),
@@ -995,7 +995,7 @@ class PolygonSegmenterTrainer:
     def train(self) -> None:
         """Train the models"""
 
-        if self.use_ray and self.use_geometric_loss:
+        if self.use_ray and self.log_geometric_loss:
             ray.init()
 
         best_validation_loss = torch.inf
@@ -1014,7 +1014,7 @@ class PolygonSegmenterTrainer:
                 self.geometric_loss_function,
                 self.segmenter_optimizer,
                 self.predictor_optimizer,
-                self.use_geometric_loss,
+                self.log_geometric_loss,
                 self.use_label_smoothing,
                 epoch,
             )
@@ -1032,7 +1032,7 @@ class PolygonSegmenterTrainer:
                 self.segmenter_loss_function,
                 self.predictor_loss_function,
                 self.geometric_loss_function,
-                self.use_geometric_loss,
+                self.log_geometric_loss,
                 self.use_label_smoothing,
                 self.accuracy_metric,
                 self.f1_score_metric,
@@ -1119,7 +1119,7 @@ class PolygonSegmenterTrainer:
             self.segmenter_loss_function,
             self.predictor_loss_function,
             self.geometric_loss_function,
-            self.use_geometric_loss,
+            self.log_geometric_loss,
             self.use_label_smoothing,
             self.accuracy_metric,
             self.f1_score_metric,
