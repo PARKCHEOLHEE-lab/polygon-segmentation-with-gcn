@@ -1131,6 +1131,7 @@ class PolygonSegmenterTrainer:
         )
 
         self.summary_writer.add_scalar(f"{test_name}_segmenter_test_loss", test_loss_avg)
+        self.summary_writer.add_scalar(f"{test_name}_segmenter_test_geometric_loss", test_geometric_loss_avg)
         self.summary_writer.add_scalar(f"{test_name}_segmenter_test_accuracy", test_accuracy)
         self.summary_writer.add_scalar(f"{test_name}_segmenter_test_f1_score", test_f1_score)
         self.summary_writer.add_scalar(f"{test_name}_segmenter_test_auroc", test_auroc)
