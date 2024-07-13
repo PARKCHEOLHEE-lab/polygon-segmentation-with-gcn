@@ -233,6 +233,9 @@ class PolygonSegmenter(nn.Module):
         self.decoder_activation = decoder_activation
         self.predictor_activation = predictor_activation
 
+        self.representation_weights = nn.Parameter(torch.FloatTensor(self.out_channels, 1))
+        nn.init.xavier_normal_(self.representation_weights)
+
         self.to(Configuration.DEVICE)
 
     def encode(self, data: Batch) -> torch.Tensor:
@@ -269,27 +272,6 @@ class PolygonSegmenter(nn.Module):
 
         return decoded
 
-    def _train_predictor(
-        self, predictor: nn.Module, each_graph: Data, each_encoded_features: torch.Tensor
-    ) -> Tuple[torch.Tensor, int]:
-        """Train the predictor model to predict k
-
-        Args:
-            predictor (nn.Module): predictor model
-            each_graph (Data): Data object of a graph
-            each_encoded_features (torch.Tensor): Encoded features
-
-        Returns:
-            Tuple[torch.Tensor, int]: Predicted k and target k
-        """
-
-        unique_edge_index = each_graph.edge_label_index_only.unique(dim=1).t().tolist()
-
-        k_predicted = predictor(each_encoded_features.mean(dim=0).unsqueeze(dim=0))
-        k_target = len(unique_edge_index)
-
-        return k_predicted, k_target
-
     def forward(self, data: Batch) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward method of the models, segmenter and predictor
 
@@ -306,7 +288,8 @@ class PolygonSegmenter(nn.Module):
         cumulative_num_nodes = 0
 
         # Train the predictor model to predict k
-        k_pred_target_list = []
+        k_target_list = []
+        graph_representations = []
         for gi in range(data.num_graphs):
             each_graph = data[gi]
 
@@ -317,16 +300,17 @@ class PolygonSegmenter(nn.Module):
 
             cumulative_num_nodes += each_graph.num_nodes
 
-            assert each_encoded_features.shape == (each_graph.num_nodes, self.out_channels)
+            attention_scores = torch.matmul(each_encoded_features, self.representation_weights)
+            attention_weights = torch.softmax(attention_scores, dim=0)
+            graph_representation = torch.sum(each_encoded_features * attention_weights, dim=0).unsqueeze(dim=0)
+            graph_representations.append(graph_representation)
 
-            k_pred_target_list.append(self._train_predictor(self.k_predictor, each_graph, each_encoded_features))
+            k_target = len(each_graph.edge_label_index_only.unique(dim=1).t().tolist())
+            k_target_list.append(k_target)
 
-        k_predicted_list = list(map(lambda x: x[0], k_pred_target_list))
-        k_target_list = list(map(lambda x: x[1], k_pred_target_list))
+        assert len(graph_representations) == len(k_target_list)
 
-        assert len(k_predicted_list) == len(k_target_list)
-
-        k_predictions = torch.cat(k_predicted_list, dim=0).to(Configuration.DEVICE)
+        k_predictions = self.k_predictor(torch.cat(graph_representations)).to(Configuration.DEVICE)
         k_targets = torch.tensor(k_target_list).to(Configuration.DEVICE)
 
         # Sample negative edges
