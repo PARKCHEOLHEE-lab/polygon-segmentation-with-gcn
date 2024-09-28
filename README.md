@@ -16,7 +16,24 @@ From the top, topk segmentations · segmentation selected by predictor</i>
 </p>
 
 
-## File Details
+# Installation
+This repository uses the [image](/.devcontainer/Dockerfile) named `nvcr.io/nvidia/pytorch:23.10-py3` for running devcontainer.
+
+
+1. Ensure you have Docker and Visual Studio Code with the Remote - Containers extension installed.
+2. Clone the repository.
+
+    ```
+        git clone https://github.com/PARKCHEOLHEE-lab/polygon-segmentation-with-gcn.git
+    ```
+3. Open the project with VSCode.
+4. When prompted at the bottom left on the VSCode, click `Reopen in Container` or use the command palette (F1) and select `Remote-Containers: Reopen in Container`.
+5. VS Code will build the Docker container and set up the environment.
+6. Once the container is built and running, you're ready to start working with the project.
+
+<br>
+
+# File Details
 
 ### data
 - `shp/`: The directory containing the raw shapefiles.
